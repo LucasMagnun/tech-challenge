@@ -72,10 +72,10 @@ forma assíncrona.
 Estes são os dois eventos do fluxo. O formato do payload é decisão sua — só precisa ser
 consistente entre quem publica e quem consome.
 
-| Evento | Publicado por | Consumido por |
-| --- | --- | --- |
-| `transaction.created` | `transactions` | `anti-fraud` |
-| `transaction.status.updated` | `anti-fraud` | `transactions` |
+| Evento                       | Publicado por  | Consumido por  |
+| ---------------------------- | -------------- | -------------- |
+| `transaction.created`        | `transactions` | `anti-fraud`   |
+| `transaction.status.updated` | `anti-fraud`   | `transactions` |
 
 ## O que você precisa entregar
 
@@ -147,12 +147,12 @@ de fora. Quem clona o seu repositório precisa conseguir subir tudo sem pergunta
 
 Só a infraestrutura local, para que todo mundo desenvolva contra os mesmos serviços:
 
-| Arquivo | Para quê |
-| --- | --- |
-| `docker-compose.yml` | Postgres, Kafka e Kafka UI |
-| `.env.example` | Variáveis de ambiente do ambiente local |
+| Arquivo                                 | Para quê                                      |
+| --------------------------------------- | --------------------------------------------- |
+| `docker-compose.yml`                    | Postgres, Kafka e Kafka UI                    |
+| `.env.example`                          | Variáveis de ambiente do ambiente local       |
 | `.editorconfig`, `.gitignore`, `.nvmrc` | Convenções básicas de editor e versão do Node |
-| `.github/pull_request_template.md` | Template de PR |
+| `.github/pull_request_template.md`      | Template de PR                                |
 
 Todo o resto é seu. Nada aqui é intocável: se sua arquitetura pedir outra coisa, mude — e
 registre o porquê no `DECISIONS.md`.
@@ -161,16 +161,16 @@ registre o porquê no `DECISIONS.md`.
 
 O uso desta stack é obrigatório, porque é a que usamos aqui:
 
-| Camada | Tecnologia |
-| --- | --- |
-| Runtime | Node.js 22+ |
-| Gerenciador de pacotes | pnpm |
-| Backend | NestJS + TypeScript |
-| ORM | Prisma |
-| Banco | PostgreSQL |
-| Mensageria | Kafka |
-| Frontend | Next.js + React + Tailwind |
-| Testes | À sua escolha, desde que rodem no quality gate |
+| Camada                 | Tecnologia                                     |
+| ---------------------- | ---------------------------------------------- |
+| Runtime                | Node.js 22+                                    |
+| Gerenciador de pacotes | pnpm                                           |
+| Backend                | NestJS + TypeScript                            |
+| ORM                    | Prisma                                         |
+| Banco                  | PostgreSQL                                     |
+| Mensageria             | Kafka                                          |
+| Frontend               | Next.js + React + Tailwind                     |
+| Testes                 | À sua escolha, desde que rodem no quality gate |
 
 Dentro dessa stack, a organização do código é sua: paradigma, camadas, modularização e
 estilo ficam a seu critério.
@@ -184,10 +184,10 @@ docker compose up -d
 
 Serviços disponíveis depois disso:
 
-| Serviço | Endereço |
-| --- | --- |
-| Postgres | `localhost:5432` |
-| Kafka | `localhost:9092` |
+| Serviço  | Endereço              |
+| -------- | --------------------- |
+| Postgres | `localhost:5432`      |
+| Kafka    | `localhost:9092`      |
 | Kafka UI | http://localhost:8080 |
 
 As portas das suas aplicações ficam a seu critério; o `.env.example` sugere 3001 para a API
