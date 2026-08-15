@@ -68,3 +68,11 @@ _(pendente)_
 ## Volume alto de escritas e leituras concorrentes
 
 _(pendente — resposta obrigatória pelo enunciado, não precisa implementar, só defender)_
+
+## Nota técnica: versão do TypeScript
+
+O projeto fixa `typescript` na série 6.x (`^6`) em vez da 7.x mais recente porque o
+TypeScript 7.0 (lançado em julho/2026, compilador nativo em Go) ainda não expõe a API
+programática estável que o `typescript-eslint` depende para funcionar — essa API só chega
+na versão 7.1. Assim que 7.1 sair e o `typescript-eslint` anunciar suporte, vale reavaliar
+a atualização.
