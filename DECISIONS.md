@@ -76,3 +76,21 @@ TypeScript 7.0 (lançado em julho/2026, compilador nativo em Go) ainda não exp�
 programática estável que o `typescript-eslint` depende para funcionar — essa API só chega
 na versão 7.1. Assim que 7.1 sair e o `typescript-eslint` anunciar suporte, vale reavaliar
 a atualização.
+
+## Nest CLI: standalone por app, não modo monorepo
+
+**Decisão:** cada app Nest (`transactions`, `anti-fraud`) é gerado como projeto standalone
+dentro do workspace pnpm, não usando o modo monorepo nativo do Nest CLI (`nest generate app`).
+
+**Por quê:** os dois serviços são deployáveis de forma independente — é o próprio ponto do
+desafio. O modo monorepo do Nest foi pensado para projetos com build/deploy fortemente
+acoplados. Empilhar o monorepo do Nest sobre o monorepo do pnpm seria complexidade
+redundante (duas ferramentas de orquestração fazendo o mesmo papel).
+
+## Nota técnica: ajustes de tsconfig por mudanças recentes do TypeScript
+
+O `tsconfig.json` de cada app precisou de `rootDir` explícito (exigido pelas versões
+recentes do TS ao usar `declaration` + `outDir`) e não usa mais `baseUrl` (opção em
+descontinuação a partir do TS 7). `@types/node` precisou ser referenciado explicitamente
+via `"types": ["node"]` em alguns casos, já que a resolução automática de tipos globais
+ficou mais rígida com `moduleResolution: nodenext`.
