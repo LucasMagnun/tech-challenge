@@ -101,3 +101,25 @@ ficou mais rígida com `moduleResolution: nodenext`.
 (nest-cli.json), o cache incremental do TypeScript perdia sincronia após a pasta `dist/`
 ser apagada pelo Nest a cada rebuild em watch mode: o compilador reportava "0 erros" mas
 não reemitia os arquivos `.js`, deixando `dist/` incompleto (só `.d.ts`, sem `main.js`).
+
+## Validação de payload: Zod em vez de class-validator
+
+**Decisão:** validação de entrada via schemas Zod (`packages/shared`), não
+`class-validator`/`class-transformer`.
+
+**Alternativas consideradas:** `class-validator` com decorators nas classes DTO — é o
+padrão mais usado em projetos Nest, com integração nativa via `ValidationPipe`.
+
+**Por quê:** o projeto tem dois serviços (`transactions`, `anti-fraud`) trocando eventos
+via Kafka que precisam concordar sobre o mesmo formato de dado. Um schema Zod é um valor
+comum (não depende de decorators/reflection), então o mesmo schema pode validar tanto o
+corpo de uma requisição HTTP quanto o payload de um evento Kafka recebido como `unknown`
+— e o tipo TypeScript correspondente (`z.infer`) é derivado automaticamente do schema, sem
+duplicar "regra de validação" e "definição de tipo" em dois lugares. Isso concentra o
+contrato de dados de uma transação em um único ponto (`packages/shared`), consumido pelos
+dois serviços.
+
+O trade-off aceito: `class-validator` é mais reconhecido como "o jeito Nest" de validar
+DTOs e não exige um Pipe customizado (`ZodValidationPipe`, escrito manualmente); Zod exige
+esse passo extra de integração, mas paga esse custo de setup ao evitar duplicação de
+contrato entre serviços.
