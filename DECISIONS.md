@@ -94,3 +94,10 @@ recentes do TS ao usar `declaration` + `outDir`) e não usa mais `baseUrl` (opç
 descontinuação a partir do TS 7). `@types/node` precisou ser referenciado explicitamente
 via `"types": ["node"]` em alguns casos, já que a resolução automática de tipos globais
 ficou mais rígida com `moduleResolution: nodenext`.
+
+## Nota técnica: incremental do TS em conflito com deleteOutDir do Nest
+
+`tsconfig.json` não usa `"incremental": true`. Em conjunto com `"deleteOutDir": true`
+(nest-cli.json), o cache incremental do TypeScript perdia sincronia após a pasta `dist/`
+ser apagada pelo Nest a cada rebuild em watch mode: o compilador reportava "0 erros" mas
+não reemitia os arquivos `.js`, deixando `dist/` incompleto (só `.d.ts`, sem `main.js`).
