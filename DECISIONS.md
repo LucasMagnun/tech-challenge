@@ -192,3 +192,22 @@ necessidade real para este caso de uso.
 **Nota de implementação:** o scaffold inicial do frontend usa polling como implementação temporária, permitindo validar a interface de ponta a ponta
 antes do endpoint SSE existir no backend. A troca de polling para SSE (branch seguinte)
 altera apenas a forma de obter dados no frontend — o restante da UI permanece igual.
+
+## Paginacao no GET /transactions
+
+**Decisão:** listagem paginada (`page`/`limit` via query string), com tamanho de página
+padrão de 10 e teto máximo de 100 por página.
+
+**Por quê:** evita que a API retorne o volume inteiro de transações em uma única resposta
+conforme a base cresce — conecta diretamente com a preocupação de "volume alto de leituras
+e escritas concorrentes" que o desafio pede para endereçar. O teto de 100 protege contra
+uso indevido do parâmetro `limit` (alguém pedindo uma página muito grande de propósito).
+
+## SSE limitado a primeira pagina no frontend
+
+**Decisão:** atualizações em tempo real via SSE só são refletidas na lista quando o
+usuário está na primeira página.
+
+**Por quê:** com paginação, inserir um item novo em tempo real em qualquer página que não
+seja a mais recente quebraria a consistência visual (itens se deslocando entre páginas
+sem o usuário navegar). Nas páginas 2+, os dados ficam estáticos até nova navegação.
