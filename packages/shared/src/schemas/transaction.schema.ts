@@ -8,7 +8,7 @@ export const CreateTransactionSchema = z.object({
 
 export const TransactionCreatedEventSchema = z.object({
   transactionId: z.string().uuid(),
-  value: z.number().positive(),
+  amount: z.number().positive(),
   createdAt: z.string().datetime(),
 });
 

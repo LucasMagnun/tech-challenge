@@ -20,7 +20,7 @@ export class TransactionsService {
 
     const event: TransactionCreatedEvent = {
       transactionId: transaction.id,
-      value: Number(transaction.value),
+      amount: Number(transaction.value),
       createdAt: transaction.createdAt.toISOString(),
     };
 
