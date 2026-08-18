@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import type { TransactionStatus } from '@tech-challenge/shared';
 
 type Transaction = {
@@ -12,7 +12,7 @@ type Transaction = {
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000';
-const POLL_INTERVAL_MS = 3000;
+const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:3000/transactions/stream';
 
 const statusStyles: Record<TransactionStatus, string> = {
   PENDING: 'bg-yellow-100 text-yellow-800',
@@ -25,6 +25,8 @@ export default function Home() {
   const [value, setValue] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connected, setConnected] = useState(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   const fetchTransactions = useCallback(async () => {
     try {
@@ -33,16 +35,43 @@ export default function Home() {
       const data = (await response.json()) as Transaction[];
       setTransactions(data);
     } catch {
-      // Falha silenciosa no polling: não queremos interromper a experiência
-      // do usuário por uma falha pontual de rede. O próximo ciclo tenta de novo.
+      // Falha ao carregar a lista inicial: o SSE ainda vai manter os
+      // eventos futuros funcionando, então não bloqueamos a tela por isso.
     }
   }, []);
 
   useEffect(() => {
     fetchTransactions();
-    const interval = setInterval(fetchTransactions, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
   }, [fetchTransactions]);
+
+  useEffect(() => {
+    const eventSource = new EventSource(SSE_URL);
+    eventSourceRef.current = eventSource;
+
+    eventSource.onopen = () => setConnected(true);
+
+    eventSource.onmessage = (event) => {
+      const transaction = JSON.parse(event.data) as Transaction;
+
+      setTransactions((prev) => {
+        const exists = prev.some((t) => t.id === transaction.id);
+        if (exists) {
+          return prev.map((t) => (t.id === transaction.id ? transaction : t));
+        }
+        return [transaction, ...prev];
+      });
+    };
+
+    eventSource.onerror = () => {
+      // O EventSource tenta reconectar sozinho por padrão; só refletimos
+      // o estado visualmente para o usuário.
+      setConnected(false);
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -69,7 +98,6 @@ export default function Home() {
       }
 
       setValue('');
-      await fetchTransactions();
     } catch {
       setError('Não foi possível conectar à API.');
     } finally {
@@ -79,7 +107,13 @@ export default function Home() {
 
   return (
     <main className="mx-auto max-w-2xl p-8">
-      <h1 className="mb-6 text-2xl font-semibold text-gray-900">Transações</h1>
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-semibold text-gray-900">Transações</h1>
+        <span className="flex items-center gap-2 text-xs text-gray-500">
+          <span className={`h-2 w-2 rounded-full ${connected ? 'bg-green-500' : 'bg-gray-300'}`} />
+          {connected ? 'Tempo real conectado' : 'Reconectando...'}
+        </span>
+      </div>
 
       <form onSubmit={handleSubmit} className="mb-8 flex gap-2">
         <input
