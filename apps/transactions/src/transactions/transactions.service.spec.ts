@@ -44,7 +44,7 @@ describe('TransactionsService', () => {
     });
     expect(kafkaClient.emit).toHaveBeenCalledWith('transaction.created', {
       transactionId: expected.id,
-      value: 150.5,
+      amount: 150.5,
       createdAt: expected.createdAt.toISOString(),
     });
     expect(result).toEqual(expected);

@@ -22,8 +22,8 @@ export class AntiFraudService {
       return;
     }
 
-    const { transactionId, value } = parsed.data;
-    const status = value > FRAUD_THRESHOLD ? 'REJECTED' : 'APPROVED';
+    const { transactionId, amount } = parsed.data;
+    const status = amount > FRAUD_THRESHOLD ? 'REJECTED' : 'APPROVED';
 
     const event: TransactionStatusUpdatedEvent = { transactionId, status };
 
