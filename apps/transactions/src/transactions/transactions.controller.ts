@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Sse } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Sse } from '@nestjs/common';
 import { EventPattern, Payload } from '@nestjs/microservices';
 import { map, Observable } from 'rxjs';
 import { CreateTransactionSchema, type CreateTransactionDto } from '@tech-challenge/shared';
@@ -21,8 +21,11 @@ export class TransactionsController {
   }
 
   @Get()
-  findAll() {
-    return this.transactionsService.findAll();
+  findAll(@Query('page') page?: string, @Query('limit') limit?: string) {
+    return this.transactionsService.findAll(
+      page ? Number(page) : undefined,
+      limit ? Number(limit) : undefined,
+    );
   }
 
   @Sse('stream')
