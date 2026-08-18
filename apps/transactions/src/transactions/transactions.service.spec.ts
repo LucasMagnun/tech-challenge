@@ -7,7 +7,12 @@ import { TransactionsEventsService } from './transactions-events.service';
 describe('TransactionsService', () => {
   let service: TransactionsService;
   let prisma: {
-    transaction: { create: jest.Mock; findMany: jest.Mock; update: jest.Mock };
+    transaction: {
+      create: jest.Mock;
+      findMany: jest.Mock;
+      update: jest.Mock;
+      count: jest.Mock;
+    };
   };
   let kafkaClient: { emit: jest.Mock };
   let transactionsEvents: { emit: jest.Mock };
@@ -18,6 +23,7 @@ describe('TransactionsService', () => {
         create: jest.fn(),
         findMany: jest.fn(),
         update: jest.fn(),
+        count: jest.fn(),
       },
     };
     kafkaClient = { emit: jest.fn() };
@@ -59,14 +65,35 @@ describe('TransactionsService', () => {
     expect(result).toEqual(expected);
   });
 
-  it('deve listar transacoes ordenadas por data de criacao desc', async () => {
+  it('deve listar transacoes paginadas ordenadas por data de criacao desc', async () => {
     prisma.transaction.findMany.mockResolvedValue([]);
+    prisma.transaction.count.mockResolvedValue(25);
 
-    await service.findAll();
+    const result = await service.findAll(2, 10);
 
     expect(prisma.transaction.findMany).toHaveBeenCalledWith({
       orderBy: { createdAt: 'desc' },
+      skip: 10,
+      take: 10,
     });
+    expect(result).toEqual({
+      data: [],
+      total: 25,
+      page: 2,
+      limit: 10,
+      totalPages: 3,
+    });
+  });
+
+  it('deve limitar o tamanho maximo de pagina a 100', async () => {
+    prisma.transaction.findMany.mockResolvedValue([]);
+    prisma.transaction.count.mockResolvedValue(0);
+
+    await service.findAll(1, 500);
+
+    expect(prisma.transaction.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 100 }),
+    );
   });
 
   it('deve atualizar o status e emitir no sse quando o evento for valido', async () => {
