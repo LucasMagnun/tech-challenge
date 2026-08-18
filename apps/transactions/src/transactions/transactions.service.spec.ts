@@ -1,10 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { TransactionsService } from './transactions.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { KAFKA_CLIENT } from '../kafka/kafka.module';
 
 describe('TransactionsService', () => {
   let service: TransactionsService;
   let prisma: { transaction: { create: jest.Mock } };
+  let kafkaClient: { emit: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -12,9 +14,14 @@ describe('TransactionsService', () => {
         create: jest.fn(),
       },
     };
+    kafkaClient = { emit: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [TransactionsService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        TransactionsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: KAFKA_CLIENT, useValue: kafkaClient },
+      ],
     }).compile();
 
     service = module.get<TransactionsService>(TransactionsService);
@@ -34,6 +41,11 @@ describe('TransactionsService', () => {
 
     expect(prisma.transaction.create).toHaveBeenCalledWith({
       data: { value: 150.5 },
+    });
+    expect(kafkaClient.emit).toHaveBeenCalledWith('transaction.created', {
+      transactionId: expected.id,
+      value: 150.5,
+      createdAt: expected.createdAt.toISOString(),
     });
     expect(result).toEqual(expected);
   });
