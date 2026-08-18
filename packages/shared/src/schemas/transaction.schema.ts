@@ -17,6 +17,7 @@ export const TransactionStatusUpdatedEventSchema = z.object({
   status: TransactionStatusSchema,
 });
 
+export type TransactionStatus = z.infer<typeof TransactionStatusSchema>;
 export type CreateTransactionDto = z.infer<typeof CreateTransactionSchema>;
 export type TransactionCreatedEvent = z.infer<typeof TransactionCreatedEventSchema>;
 export type TransactionStatusUpdatedEvent = z.infer<typeof TransactionStatusUpdatedEventSchema>;

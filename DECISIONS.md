@@ -176,3 +176,19 @@ pelo `anti-fraud`.
 recebem todas as mensagens dos tópicos aos quais estão inscritos — grupos compartilhados
 fariam os serviços competirem pelas mesmas mensagens de tópicos diferentes, quebrando o
 fluxo bidirecional do desafio.
+
+## Atualizacao de status na UI: polling (temporario) -> SSE
+
+**Decisão final:** Server-Sent Events (SSE), com um endpoint `GET /transactions/stream` no
+`transactions` que empurra atualizações em tempo real para os clientes conectados.
+
+**Alternativas consideradas:** WebSocket (descartado por ser bidirecional sem necessidade
+real aqui — o fluxo é unidirecional, servidor para cliente) e polling HTTP simples.
+
+**Por quê SSE:** roda sobre HTTP comum, o navegador reconecta sozinho em caso de queda, e
+não exige tratar concorrência de conexões bidirecionais que o WebSocket implicaria sem
+necessidade real para este caso de uso.
+
+**Nota de implementação:** o scaffold inicial do frontend usa polling como implementação temporária, permitindo validar a interface de ponta a ponta
+antes do endpoint SSE existir no backend. A troca de polling para SSE (branch seguinte)
+altera apenas a forma de obter dados no frontend — o restante da UI permanece igual.
