@@ -5,13 +5,17 @@ import { KAFKA_CLIENT } from '../kafka/kafka.module';
 
 describe('TransactionsService', () => {
   let service: TransactionsService;
-  let prisma: { transaction: { create: jest.Mock } };
+  let prisma: {
+    transaction: { create: jest.Mock; findMany: jest.Mock; update: jest.Mock };
+  };
   let kafkaClient: { emit: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
       transaction: {
         create: jest.fn(),
+        findMany: jest.fn(),
+        update: jest.fn(),
       },
     };
     kafkaClient = { emit: jest.fn() };
@@ -48,5 +52,33 @@ describe('TransactionsService', () => {
       createdAt: expected.createdAt.toISOString(),
     });
     expect(result).toEqual(expected);
+  });
+
+  it('deve listar transacoes ordenadas por data de criacao desc', async () => {
+    prisma.transaction.findMany.mockResolvedValue([]);
+
+    await service.findAll();
+
+    expect(prisma.transaction.findMany).toHaveBeenCalledWith({
+      orderBy: { createdAt: 'desc' },
+    });
+  });
+
+  it('deve atualizar o status da transacao quando o evento for valido', async () => {
+    await service.updateStatus({
+      transactionId: '11111111-1111-1111-1111-111111111111',
+      status: 'APPROVED',
+    });
+
+    expect(prisma.transaction.update).toHaveBeenCalledWith({
+      where: { id: '11111111-1111-1111-1111-111111111111' },
+      data: { status: 'APPROVED' },
+    });
+  });
+
+  it('nao deve atualizar quando o evento for invalido', async () => {
+    await service.updateStatus({ foo: 'bar' });
+
+    expect(prisma.transaction.update).not.toHaveBeenCalled();
   });
 });
