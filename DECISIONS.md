@@ -123,3 +123,20 @@ O trade-off aceito: `class-validator` é mais reconhecido como "o jeito Nest" de
 DTOs e não exige um Pipe customizado (`ZodValidationPipe`, escrito manualmente); Zod exige
 esse passo extra de integração, mas paga esse custo de setup ao evitar duplicação de
 contrato entre serviços.
+
+## Publicacao do evento Kafka
+
+**Decisão:** `TransactionsService` chama `kafkaClient.emit(...)` sem aguardar
+confirmação antes de retornar a resposta HTTP.
+
+**Por quê:** o fluxo síncrono (criar transação, responder ao cliente) não deve depender
+da disponibilidade ou latência do Kafka — é o próprio ponto de ter validação assíncrona
+via evento, em vez de bloquear a requisição esperando o resultado do antifraude.
+
+**Caminho triste identificado, ainda não coberto:** se a publicação do evento falhar
+silenciosamente (broker indisponível, erro de rede), a transação permanece em `PENDING`
+indefinidamente, sem que ninguém seja notificado. Mitigação futura considerada: capturar
+erro de `emit` com um `.catch()`/listener de erro do client Kafka e ao menos logar a
+falha; uma solução mais robusta (fila de retry, job de reconciliação que varre
+transações `PENDING` antigas) fica fora do escopo deste desafio, mas é o tipo de gap que
+existiria em produção.
