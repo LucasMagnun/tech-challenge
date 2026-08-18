@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ClientKafka } from '@nestjs/microservices';
 import { PrismaService } from '../prisma/prisma.service';
 import { KAFKA_CLIENT } from '../kafka/kafka.module';
+import { TransactionsEventsService } from './transactions-events.service';
 import {
   TransactionStatusUpdatedEventSchema,
   type CreateTransactionDto,
@@ -14,6 +15,7 @@ export class TransactionsService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly transactionsEvents: TransactionsEventsService,
     @Inject(KAFKA_CLIENT) private readonly kafkaClient: ClientKafka,
   ) {}
 
@@ -23,6 +25,8 @@ export class TransactionsService {
         value: dto.value,
       },
     });
+
+    this.transactionsEvents.emit(transaction);
 
     const event: TransactionCreatedEvent = {
       transactionId: transaction.id,
@@ -52,10 +56,11 @@ export class TransactionsService {
     const { transactionId, status } = parsed.data;
 
     try {
-      await this.prisma.transaction.update({
+      const transaction = await this.prisma.transaction.update({
         where: { id: transactionId },
         data: { status },
       });
+      this.transactionsEvents.emit(transaction);
       this.logger.log(`Transacao ${transactionId} atualizada para ${status}`);
     } catch (error) {
       this.logger.error(`Falha ao atualizar transacao ${transactionId}: ${error}`);
