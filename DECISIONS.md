@@ -152,3 +152,27 @@ o resto do objeto, silenciosamente, sem erro. Como o schema original usava `valu
 valor da transação, apenas esse número era publicado no tópico, perdendo `transactionId` e
 `createdAt`. É um comportamento documentado da biblioteca (nestjs/nest#12886); a correção
 foi renomear o campo no contrato do evento.
+
+## Transactions como aplicacao hibrida (HTTP + Kafka consumer)
+
+**Decisão:** o serviço `transactions` roda HTTP e consumer Kafka no mesmo processo, via
+`app.connectMicroservice()` + `app.startAllMicroservices()`.
+
+**Alternativas consideradas:** um terceiro processo/serviço separado só para consumir
+`transaction.status.updated`.
+
+**Por quê:** o consumer só precisa fazer uma coisa simples (atualizar o status no banco
+que o próprio `transactions` já possui e gerencia). Separar em outro processo adicionaria
+deploy e operação extra sem benefício real, já que não há necessidade de escalar o
+consumo de status independentemente da API HTTP neste escopo.
+
+## Consumer group separado para o consumer de status
+
+**Decisão:** o consumer de `transaction.status.updated` no `transactions` usa
+`groupId: transactions-consumer-group`, diferente do `anti-fraud-consumer-group` usado
+pelo `anti-fraud`.
+
+**Por quê:** cada serviço precisa do seu próprio consumer group para garantir que ambos
+recebem todas as mensagens dos tópicos aos quais estão inscritos — grupos compartilhados
+fariam os serviços competirem pelas mesmas mensagens de tópicos diferentes, quebrando o
+fluxo bidirecional do desafio.
