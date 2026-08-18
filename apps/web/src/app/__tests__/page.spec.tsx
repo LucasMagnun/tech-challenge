@@ -14,6 +14,16 @@ class MockEventSource {
   }
 }
 
+function paginated(data: unknown[], overrides: Partial<{ page: number; totalPages: number }> = {}) {
+  return {
+    data,
+    total: data.length,
+    page: overrides.page ?? 1,
+    limit: 10,
+    totalPages: overrides.totalPages ?? 1,
+  };
+}
+
 describe('Home', () => {
   beforeEach(() => {
     global.fetch = jest.fn();
@@ -29,27 +39,28 @@ describe('Home', () => {
   it('lista as transacoes retornadas pela api', async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
-      json: async () => [
-        {
-          id: '1',
-          value: '150.50',
-          status: 'PENDING',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      ],
+      json: async () =>
+        paginated([
+          {
+            id: '1',
+            value: '150.50',
+            status: 'PENDING',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ]),
     });
 
     render(<Home />);
 
     await waitFor(() => {
-      expect(screen.getByText('R$ 150.50')).toBeInTheDocument();
+      expect(screen.getByText('R$ 150,50')).toBeInTheDocument();
     });
     expect(screen.getByText('PENDING')).toBeInTheDocument();
   });
 
   it('atualiza a lista quando recebe um evento via sse', async () => {
-    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => [] });
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => paginated([]) });
 
     render(<Home />);
 
@@ -69,7 +80,7 @@ describe('Home', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('R$ 999')).toBeInTheDocument();
+      expect(screen.getByText('R$ 999,00')).toBeInTheDocument();
     });
     expect(screen.getByText('APPROVED')).toBeInTheDocument();
   });
@@ -77,8 +88,9 @@ describe('Home', () => {
   it('envia uma nova transacao ao submeter o formulario', async () => {
     const user = userEvent.setup();
     (global.fetch as jest.Mock)
-      .mockResolvedValueOnce({ ok: true, json: async () => [] })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) });
+      .mockResolvedValueOnce({ ok: true, json: async () => paginated([]) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, json: async () => paginated([]) });
 
     render(<Home />);
 
@@ -99,7 +111,7 @@ describe('Home', () => {
 
   it('mostra mensagem de erro para valor invalido, sem chamar a api', async () => {
     const user = userEvent.setup();
-    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => [] });
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => paginated([]) });
 
     render(<Home />);
 
@@ -108,5 +120,20 @@ describe('Home', () => {
     await user.click(screen.getByRole('button', { name: /criar/i }));
 
     expect(await screen.findByText('Informe um valor positivo.')).toBeInTheDocument();
+  });
+
+  it('exibe controles de paginacao quando ha mais de uma pagina', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      json: async () => paginated([], { page: 1, totalPages: 3 }),
+    });
+
+    render(<Home />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Página 1 de 3')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /anterior/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /pr[óo]xima/i })).not.toBeDisabled();
   });
 });
