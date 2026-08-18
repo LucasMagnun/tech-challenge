@@ -9,6 +9,8 @@ import {
   type TransactionCreatedEvent,
 } from '@tech-challenge/shared';
 
+const DEFAULT_PAGE_SIZE = 10;
+
 @Injectable()
 export class TransactionsService {
   private readonly logger = new Logger(TransactionsService.name);
@@ -39,10 +41,26 @@ export class TransactionsService {
     return transaction;
   }
 
-  async findAll() {
-    return this.prisma.transaction.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
+  async findAll(page = 1, limit = DEFAULT_PAGE_SIZE) {
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.min(Math.max(1, limit), 100);
+
+    const [data, total] = await Promise.all([
+      this.prisma.transaction.findMany({
+        orderBy: { createdAt: 'desc' },
+        skip: (safePage - 1) * safeLimit,
+        take: safeLimit,
+      }),
+      this.prisma.transaction.count(),
+    ]);
+
+    return {
+      data,
+      total,
+      page: safePage,
+      limit: safeLimit,
+      totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+    };
   }
 
   async updateStatus(rawPayload: unknown) {
