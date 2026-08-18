@@ -140,3 +140,15 @@ erro de `emit` com um `.catch()`/listener de erro do client Kafka e ao menos log
 falha; uma solução mais robusta (fila de retry, job de reconciliação que varre
 transações `PENDING` antigas) fica fora do escopo deste desafio, mas é o tipo de gap que
 existiria em produção.
+cat >> DECISIONS.md << 'EOF'
+
+## Nota técnica: campo "value" no evento colide com serializer do Kafka do Nest
+
+O evento `transaction.created` usa o campo `amount`, não `value`, para o valor monetário.
+O `KafkaRequestSerializer` do `@nestjs/microservices` verifica se o payload publicado via
+`emit()` contém as chaves `key` ou `value` para decidir se o objeto já é uma mensagem Kafka
+pronta (`{ key, value, headers }`) — nesse caso ele extrai apenas o campo `value` e descarta
+o resto do objeto, silenciosamente, sem erro. Como o schema original usava `value` para o
+valor da transação, apenas esse número era publicado no tópico, perdendo `transactionId` e
+`createdAt`. É um comportamento documentado da biblioteca (nestjs/nest#12886); a correção
+foi renomear o campo no contrato do evento.
