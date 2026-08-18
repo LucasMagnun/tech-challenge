@@ -11,6 +11,14 @@ type Transaction = {
   updatedAt: string;
 };
 
+type PaginatedResponse = {
+  data: Transaction[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000';
 const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:3000/transactions/stream';
 
@@ -20,29 +28,45 @@ const statusStyles: Record<TransactionStatus, string> = {
   REJECTED: 'bg-red-100 text-red-800',
 };
 
+const currencyFormatter = new Intl.NumberFormat('pt-BR', {
+  style: 'currency',
+  currency: 'BRL',
+});
+
+function formatCurrency(value: string) {
+  return currencyFormatter.format(Number(value));
+}
+
 export default function Home() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(true);
   const [value, setValue] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  const fetchTransactions = useCallback(async () => {
+  const fetchTransactions = useCallback(async (targetPage: number) => {
+    setLoading(true);
     try {
-      const response = await fetch(`${API_URL}/transactions`);
+      const response = await fetch(`${API_URL}/transactions?page=${targetPage}&limit=10`);
       if (!response.ok) return;
-      const data = (await response.json()) as Transaction[];
-      setTransactions(data);
+      const result = (await response.json()) as PaginatedResponse;
+      setTransactions(result.data);
+      setTotalPages(result.totalPages);
     } catch {
-      // Falha ao carregar a lista inicial: o SSE ainda vai manter os
-      // eventos futuros funcionando, então não bloqueamos a tela por isso.
+      // Falha ao carregar a lista: o SSE mantém eventos futuros funcionando,
+      // então não bloqueamos a tela por uma falha pontual de rede.
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchTransactions();
-  }, [fetchTransactions]);
+    fetchTransactions(page);
+  }, [page, fetchTransactions]);
 
   useEffect(() => {
     const eventSource = new EventSource(SSE_URL);
@@ -53,20 +77,25 @@ export default function Home() {
     eventSource.onmessage = (event) => {
       const transaction = JSON.parse(event.data) as Transaction;
 
-      setTransactions((prev) => {
-        const exists = prev.some((t) => t.id === transaction.id);
-        if (exists) {
-          return prev.map((t) => (t.id === transaction.id ? transaction : t));
-        }
-        return [transaction, ...prev];
+      // Só refletimos atualizações em tempo real quando o usuário está na
+      // primeira página (a mais recente); nas demais, a paginação ficaria
+      // inconsistente se itens fossem inseridos/deslocados por baixo dele.
+      setPage((currentPage) => {
+        if (currentPage !== 1) return currentPage;
+
+        setTransactions((prev) => {
+          const exists = prev.some((t) => t.id === transaction.id);
+          if (exists) {
+            return prev.map((t) => (t.id === transaction.id ? transaction : t));
+          }
+          return [transaction, ...prev].slice(0, 10);
+        });
+
+        return currentPage;
       });
     };
 
-    eventSource.onerror = () => {
-      // O EventSource tenta reconectar sozinho por padrão; só refletimos
-      // o estado visualmente para o usuário.
-      setConnected(false);
-    };
+    eventSource.onerror = () => setConnected(false);
 
     return () => {
       eventSource.close();
@@ -98,6 +127,7 @@ export default function Home() {
       }
 
       setValue('');
+      if (page !== 1) setPage(1);
     } catch {
       setError('Não foi possível conectar à API.');
     } finally {
@@ -127,7 +157,7 @@ export default function Home() {
         <button
           type="submit"
           disabled={submitting}
-          className="rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50"
+          className="cursor-pointer rounded bg-blue-600 px-4 py-2 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting ? 'Enviando...' : 'Criar'}
         </button>
@@ -135,29 +165,57 @@ export default function Home() {
 
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
-      <ul className="space-y-2">
-        {transactions.map((t) => (
-          <li
-            key={t.id}
-            className="flex items-center justify-between rounded border border-gray-200 px-4 py-3"
-          >
-            <div>
-              <p className="font-medium text-gray-900">R$ {t.value}</p>
-              <p className="text-xs text-gray-500">
-                {new Date(t.createdAt).toLocaleString('pt-BR')}
-              </p>
-            </div>
-            <span
-              className={`rounded-full px-3 py-1 text-xs font-medium ${statusStyles[t.status]}`}
+      {loading && transactions.length === 0 ? (
+        <p className="text-sm text-gray-500">Carregando...</p>
+      ) : (
+        <ul className="space-y-2">
+          {transactions.map((t) => (
+            <li
+              key={t.id}
+              className="flex items-center justify-between rounded border border-gray-200 px-4 py-3"
             >
-              {t.status}
-            </span>
-          </li>
-        ))}
-        {transactions.length === 0 && (
-          <p className="text-sm text-gray-500">Nenhuma transação ainda.</p>
-        )}
-      </ul>
+              <div>
+                <p className="font-medium text-gray-900">{formatCurrency(t.value)}</p>
+                <p className="text-xs text-gray-500">
+                  {new Date(t.createdAt).toLocaleString('pt-BR')}
+                </p>
+              </div>
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-medium ${statusStyles[t.status]}`}
+              >
+                {t.status}
+              </span>
+            </li>
+          ))}
+          {transactions.length === 0 && (
+            <p className="text-sm text-gray-500">Nenhuma transação ainda.</p>
+          )}
+        </ul>
+      )}
+
+      {totalPages > 1 && (
+        <div className="mt-6 flex items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="cursor-pointer rounded border border-gray-300 px-3 py-1 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Anterior
+          </button>
+          <span className="text-sm text-gray-600">
+            Página {page} de {totalPages}
+          </span>
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages}
+            className="cursor-pointer rounded border border-gray-300 px-3 py-1 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Próxima
+          </button>
+        </div>
+      )}
     </main>
   );
 }
