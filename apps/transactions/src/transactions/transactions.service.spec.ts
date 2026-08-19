@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { TransactionsService } from './transactions.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,6 +11,7 @@ describe('TransactionsService', () => {
     transaction: {
       create: jest.Mock;
       findMany: jest.Mock;
+      findUnique: jest.Mock;
       update: jest.Mock;
       count: jest.Mock;
     };
@@ -22,6 +24,7 @@ describe('TransactionsService', () => {
       transaction: {
         create: jest.fn(),
         findMany: jest.fn(),
+        findUnique: jest.fn(),
         update: jest.fn(),
         count: jest.fn(),
       },
@@ -87,6 +90,37 @@ describe('TransactionsService', () => {
     });
   });
 
+  it('deve retornar uma transacao pelo id externo', async () => {
+    const createdAt = new Date();
+    prisma.transaction.findUnique.mockResolvedValue({
+      id: 'uuid-fake',
+      accountExternalIdDebit: 'a',
+      accountExternalIdCredit: 'b',
+      transferTypeId: 1,
+      value: '500',
+      status: 'APPROVED',
+      createdAt,
+      updatedAt: createdAt,
+    });
+
+    const result = await service.findOne('uuid-fake');
+
+    expect(prisma.transaction.findUnique).toHaveBeenCalledWith({ where: { id: 'uuid-fake' } });
+    expect(result).toEqual({
+      transactionExternalId: 'uuid-fake',
+      transactionType: { name: '1' },
+      transactionStatus: { name: 'APPROVED' },
+      value: '500',
+      createdAt: createdAt.toISOString(),
+    });
+  });
+
+  it('deve lancar NotFoundException quando a transacao nao existe', async () => {
+    prisma.transaction.findUnique.mockResolvedValue(null);
+
+    await expect(service.findOne('id-inexistente')).rejects.toThrow(NotFoundException);
+  });
+
   it('deve listar transacoes paginadas ordenadas por data de criacao desc, mapeadas para o contrato', async () => {
     const createdAt = new Date();
     prisma.transaction.findMany.mockResolvedValue([
@@ -103,9 +137,10 @@ describe('TransactionsService', () => {
     ]);
     prisma.transaction.count.mockResolvedValue(25);
 
-    const result = await service.findAll(2, 10);
+    const result = await service.findAll({ page: 2, limit: 10 });
 
     expect(prisma.transaction.findMany).toHaveBeenCalledWith({
+      where: {},
       orderBy: { createdAt: 'desc' },
       skip: 10,
       take: 10,
@@ -127,11 +162,36 @@ describe('TransactionsService', () => {
     });
   });
 
+  it('deve filtrar por status, transferTypeId e periodo', async () => {
+    prisma.transaction.findMany.mockResolvedValue([]);
+    prisma.transaction.count.mockResolvedValue(0);
+
+    await service.findAll({
+      status: 'APPROVED',
+      transferTypeId: 1,
+      startDate: '2026-01-01T00:00:00.000Z',
+      endDate: '2026-01-31T23:59:59.999Z',
+    });
+
+    expect(prisma.transaction.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          status: 'APPROVED',
+          transferTypeId: 1,
+          createdAt: {
+            gte: new Date('2026-01-01T00:00:00.000Z'),
+            lte: new Date('2026-01-31T23:59:59.999Z'),
+          },
+        },
+      }),
+    );
+  });
+
   it('deve limitar o tamanho maximo de pagina a 100', async () => {
     prisma.transaction.findMany.mockResolvedValue([]);
     prisma.transaction.count.mockResolvedValue(0);
 
-    await service.findAll(1, 500);
+    await service.findAll({ page: 1, limit: 500 });
 
     expect(prisma.transaction.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ take: 100 }),

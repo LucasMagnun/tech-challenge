@@ -1,7 +1,11 @@
-import { Body, Controller, Get, Post, Query, Sse } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Sse } from '@nestjs/common';
 import { EventPattern, Payload } from '@nestjs/microservices';
 import { map, Observable } from 'rxjs';
-import { CreateTransactionSchema, type CreateTransactionDto } from '@tech-challenge/shared';
+import {
+  CreateTransactionSchema,
+  type CreateTransactionDto,
+  type TransactionStatus,
+} from '@tech-challenge/shared';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { TransactionsService } from './transactions.service';
 import { TransactionsEventsService } from './transactions-events.service';
@@ -22,11 +26,22 @@ export class TransactionsController {
   }
 
   @Get()
-  findAll(@Query('page') page?: string, @Query('limit') limit?: string) {
-    return this.transactionsService.findAll(
-      page ? Number(page) : undefined,
-      limit ? Number(limit) : undefined,
-    );
+  findAll(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: TransactionStatus,
+    @Query('transferTypeId') transferTypeId?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.transactionsService.findAll({
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      status,
+      transferTypeId: transferTypeId ? Number(transferTypeId) : undefined,
+      startDate,
+      endDate,
+    });
   }
 
   @Sse('stream')
@@ -34,6 +49,11 @@ export class TransactionsController {
     return this.transactionsEvents
       .stream()
       .pipe(map((transaction) => ({ data: toTransactionResource(transaction) })));
+  }
+
+  @Get(':transactionExternalId')
+  findOne(@Param('transactionExternalId') transactionExternalId: string) {
+    return this.transactionsService.findOne(transactionExternalId);
   }
 
   @EventPattern('transaction.status.updated')

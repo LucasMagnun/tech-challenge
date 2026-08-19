@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ClientKafka } from '@nestjs/microservices';
 import { PrismaService } from '../prisma/prisma.service';
 import { KAFKA_CLIENT } from '../kafka/kafka.module';
@@ -8,9 +8,20 @@ import {
   TransactionStatusUpdatedEventSchema,
   type CreateTransactionDto,
   type TransactionCreatedEvent,
+  type TransactionStatus,
 } from '@tech-challenge/shared';
+import type { Prisma } from '@prisma/client';
 
 const DEFAULT_PAGE_SIZE = 10;
+
+export type FindAllFilters = {
+  page?: number;
+  limit?: number;
+  status?: TransactionStatus;
+  transferTypeId?: number;
+  startDate?: string;
+  endDate?: string;
+};
 
 @Injectable()
 export class TransactionsService {
@@ -45,17 +56,45 @@ export class TransactionsService {
     return toTransactionResource(transaction);
   }
 
-  async findAll(page = 1, limit = DEFAULT_PAGE_SIZE) {
-    const safePage = Math.max(1, page);
-    const safeLimit = Math.min(Math.max(1, limit), 100);
+  async findOne(transactionExternalId: string) {
+    const transaction = await this.prisma.transaction.findUnique({
+      where: { id: transactionExternalId },
+    });
+
+    if (!transaction) {
+      throw new NotFoundException('Transacao nao encontrada');
+    }
+
+    return toTransactionResource(transaction);
+  }
+
+  async findAll(filters: FindAllFilters = {}) {
+    const safePage = Math.max(1, filters.page ?? 1);
+    const safeLimit = Math.min(Math.max(1, filters.limit ?? DEFAULT_PAGE_SIZE), 100);
+
+    const where: Prisma.TransactionWhereInput = {};
+
+    if (filters.status) {
+      where.status = filters.status;
+    }
+    if (filters.transferTypeId !== undefined) {
+      where.transferTypeId = filters.transferTypeId;
+    }
+    if (filters.startDate || filters.endDate) {
+      where.createdAt = {
+        ...(filters.startDate ? { gte: new Date(filters.startDate) } : {}),
+        ...(filters.endDate ? { lte: new Date(filters.endDate) } : {}),
+      };
+    }
 
     const [data, total] = await Promise.all([
       this.prisma.transaction.findMany({
+        where,
         orderBy: { createdAt: 'desc' },
         skip: (safePage - 1) * safeLimit,
         take: safeLimit,
       }),
-      this.prisma.transaction.count(),
+      this.prisma.transaction.count({ where }),
     ]);
 
     return {

@@ -241,3 +241,18 @@ diferente da versão simplificada usada até esta branch.
 manualmente no formulário adicionaria complexidade de UX sem valor real para o escopo do
 desafio. Gerar automaticamente satisfaz o contrato exigido pela API sem exigir modelagem
 de conta que não foi pedida.
+
+## Endpoint de detalhe e filtros na listagem
+
+**Decisão:** `GET /transactions/:transactionExternalId` para consulta individual, e
+`GET /transactions` aceita filtros opcionais por `status`, `transferTypeId` e período
+(`startDate`/`endDate`, comparados contra `createdAt`).
+
+**Por quê período como startDate/endDate:** é o padrão mais comum em dashboards (Stripe,
+Google Analytics, painéis administrativos em geral). Presets de UI ("hoje", "7 dias") são
+implementáveis no frontend como atalhos que calculam essas duas datas, sem exigir mudança
+na API.
+
+**Ordem de rotas no controller:** `@Sse('stream')` precisa ser declarado antes de
+`@Get(':transactionExternalId')` — caso contrário, o Nest resolveria `GET /transactions/stream`
+como se "stream" fosse um `transactionExternalId`, quebrando a rota de tempo real.
