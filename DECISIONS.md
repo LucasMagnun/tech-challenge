@@ -294,3 +294,15 @@ desenvolvimento — não são decisões de arquitetura, mas documentam ajustes n
   detalhes de formatação do lockfile durante `pnpm install` (inclusive em modo
   `--frozen-lockfile`), fazendo `prettier --check` falhar de forma inconsistente entre o
   commit local e a execução no CI.
+
+## Nota técnica: crash na primeira inicializacao com Kafka vazio
+
+Em um broker Kafka completamente vazio (primeira vez, sem tópicos criados), o consumer do
+`transactions` pode falhar ao tentar se inscrever em um tópico que está sendo criado
+automaticamente pelo broker (`KAFKA_AUTO_CREATE_TOPICS_ENABLE=true`), devido a uma
+condição de corrida entre a criação do tópico e a eleição do líder de partição —
+resultando em `KafkaJSProtocolError: This server does not host this topic-partition` e
+encerrando o processo (exceção não tratada). O problema é transitório: reiniciar o
+serviço após a primeira falha resolve, já que o tópico já existe na segunda tentativa.
+Mitigação não implementada neste escopo: tratar essa exceção especificamente com retry,
+ou pré-criar os tópicos explicitamente antes de subir os consumers.
