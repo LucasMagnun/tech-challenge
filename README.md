@@ -1,220 +1,119 @@
-# Desafio Técnico BIUD — Fullstack
+# Tech Challenge — BIUD
 
-Bem-vindo. Este desafio existe para que você mostre como pensa, decide e organiza código em
-um cenário próximo do que fazemos aqui: uma API orientada a eventos e uma interface que
-precisa lidar com dados que mudam depois que a tela já foi renderizada.
+Sistema de transações financeiras com validação antifraude assíncrona, construído como
+monorepo (NestJS + Next.js + Kafka + PostgreSQL).
 
-O repositório vem praticamente vazio de propósito. Montar o projeto — workspace, tooling,
-padrões, integração contínua — faz parte do desafio, porque faz parte do trabalho.
+## Arquitetura
 
-Leia o [PRACTICES.md](./PRACTICES.md) antes de começar: o que está lá são requisitos, não
-sugestões.
+- `apps/transactions` — API REST (criação, consulta, listagem paginada/filtrada de
+  transações), publica e consome eventos Kafka, expõe atualização em tempo real via SSE
+- `apps/anti-fraud` — microservice Kafka puro, consome o evento de criação e aplica a
+  regra de validação (valor > 1000 → rejeitada)
+- `apps/web` — dashboard Next.js (App Router): listagem com filtros, criação por
+  formulário, tela de detalhe, atualização de status em tempo real
+- `packages/shared` — contratos compartilhados (schemas Zod) entre os serviços
 
-- [O problema](#o-problema)
-- [Contratos](#contratos)
-- [O que você precisa entregar](#o-que-você-precisa-entregar)
-- [O que já vem no repositório](#o-que-já-vem-no-repositório)
-- [Stack](#stack)
-- [Subindo a infraestrutura](#subindo-a-infraestrutura)
-- [Defesa do código](#defesa-do-código)
-- [Como entregar](#como-entregar)
+Decisões de arquitetura, trade-offs e as respostas às perguntas obrigatórias do enunciado
+estão documentadas em [`DECISIONS.md`](./DECISIONS.md).
 
----
+## Pré-requisitos
 
-## O problema
+- Node 22+ (ver `.nvmrc`)
+- pnpm — `corepack enable && corepack prepare pnpm@11.22.0 --activate`
+- Docker + Docker Compose
 
-Toda transação financeira criada precisa ser validada por um microserviço antifraude. Esse
-serviço avalia a transação e devolve o resultado, que atualiza o status do registro
-original.
+## Rodando o projeto
 
-Uma transação tem três status possíveis: **pendente**, **aprovada** e **rejeitada**. Toda
-transação com valor **acima de 1000** deve ser rejeitada; as demais são aprovadas.
+1. Clone o repositório e instale as dependências:
 
-```mermaid
-flowchart LR
-  Transaction -- Salva com status pendente --> DB[(Database)]
-  Transaction -- Evento transaction.created --> AntiFraud[Anti-Fraud]
-  AntiFraud -- Evento transaction.status.updated --> Transaction
-  Transaction -- Atualiza o status --> DB
-```
+   ```bash
+   pnpm install
+   ```
 
-A comunicação entre os dois serviços é feita por **Kafka**. A chamada de criação não pode
-esperar o resultado da validação: a transação nasce `pendente` e muda de status depois, de
-forma assíncrona.
+2. Suba a infraestrutura (Postgres, Kafka, Kafka UI):
 
-## Contratos
+   ```bash
+   docker compose up -d
+   ```
 
-### Criar uma transação
+3. Configure as variáveis de ambiente:
 
-```json
-{
-  "accountExternalIdDebit": "Guid",
-  "accountExternalIdCredit": "Guid",
-  "transferTypeId": 1,
-  "value": 120
-}
-```
+   ```bash
+   cp .env.example .env
+   cp apps/transactions/.env.example apps/transactions/.env
+   cp apps/anti-fraud/.env.example apps/anti-fraud/.env
+   cp apps/web/.env.example apps/web/.env.local
+   ```
 
-### Recuperar uma transação
+   Ajuste `DATABASE_URL` em `apps/transactions/.env` para bater com as credenciais
+   definidas no `.env` da raiz.
 
-```json
-{
-  "transactionExternalId": "Guid",
-  "transactionType": { "name": "" },
-  "transactionStatus": { "name": "" },
-  "value": 120,
-  "createdAt": "Date"
-}
-```
+4. Compile o pacote compartilhado (necessário sempre que `packages/shared` mudar):
 
-### Eventos
+   ```bash
+   cd packages/shared && pnpm build && cd ../..
+   ```
 
-Estes são os dois eventos do fluxo. O formato do payload é decisão sua — só precisa ser
-consistente entre quem publica e quem consome.
+5. Aplique as migrations:
 
-| Evento                       | Publicado por  | Consumido por  |
-| ---------------------------- | -------------- | -------------- |
-| `transaction.created`        | `transactions` | `anti-fraud`   |
-| `transaction.status.updated` | `anti-fraud`   | `transactions` |
+   ```bash
+   cd apps/transactions && pnpm exec prisma migrate deploy && pnpm exec prisma generate && cd ../..
+   ```
 
-## O que você precisa entregar
+6. Suba os três serviços (em terminais separados):
 
-### Fundação do projeto
+   ```bash
+   cd apps/transactions && pnpm start:dev   # http://localhost:3000
+   ```
 
-Você começa do zero. Espera-se que monte:
+   ```bash
+   cd apps/anti-fraud && pnpm start:dev
+   ```
 
-- A estrutura do projeto — monorepo ou repositórios separados por serviço, a escolha é sua
-- TypeScript configurado
-- Lint e formatação, rodando também como hook de pre-commit
-- Validação de mensagem de commit (Conventional Commits)
-- Um comando único que roda todo o quality gate
-- Integração contínua no GitHub Actions, executando esse mesmo quality gate e **verde ao final**
+   ```bash
+   cd apps/web && pnpm dev                   # http://localhost:3001
+   ```
 
-O [PRACTICES.md](./PRACTICES.md) detalha o que cada um desses itens precisa cobrir.
+## Qualidade
 
-### Backend
-
-- Endpoint de criação de transação, gravando com status `pendente` e publicando o evento de criação
-- Endpoint de consulta de uma transação pelo identificador externo
-- Endpoint de listagem paginada, com filtros por status, tipo e período — é o que alimenta o dashboard
-- Serviço antifraude consumindo o evento de criação, aplicando a regra e publicando o resultado
-- Consumo do evento de retorno no serviço de transações, atualizando o status
-- Modelagem de dados e migrations versionadas
-
-### Frontend
-
-Um dashboard sobre essa API, com:
-
-- **Listagem** paginada, com filtros por status, tipo e período
-- **Detalhe** de uma transação
-- **Criação** de transação por formulário, com validação
-- **Estados de tela** tratados explicitamente: carregando, erro e lista vazia
-
-Repare que a transação aparece como `pendente` e muda de status fora do ciclo de request do
-usuário. Como a interface reflete essa mudança é decisão sua — e queremos ler o porquê dela.
-
-### Testes
-
-Testes automatizados cobrindo as regras de negócio no backend e as telas principais no
-frontend.
-
-### DECISIONS.md
-
-Crie um `DECISIONS.md` na raiz. Para **cada decisão estruturante** — organização do projeto,
-modelagem de dados, formato dos eventos, tratamento de falha na mensageria, atualização do
-status na interface, estratégia de testes — registre:
-
-1. Qual foi a decisão
-2. Que alternativas você considerou
-3. Por que escolheu essa
-
-Inclua também sua resposta para esta pergunta:
-
-> A aplicação pode precisar lidar com um volume alto de escritas e leituras concorrentes.
-> Como você abordaria esse requisito?
-
-Não precisa implementar a resposta — precisa defendê-la.
-
-Uma decisão sem alternativa considerada não é uma decisão, é um acidente. É o **porquê** que
-nos interessa.
-
-### README do seu projeto
-
-Substitua este README pelo seu: o que você construiu, como rodar, como testar e o que ficou
-de fora. Quem clona o seu repositório precisa conseguir subir tudo sem perguntar nada.
-
-## O que já vem no repositório
-
-Só a infraestrutura local, para que todo mundo desenvolva contra os mesmos serviços:
-
-| Arquivo                                 | Para quê                                      |
-| --------------------------------------- | --------------------------------------------- |
-| `docker-compose.yml`                    | Postgres, Kafka e Kafka UI                    |
-| `.env.example`                          | Variáveis de ambiente do ambiente local       |
-| `.editorconfig`, `.gitignore`, `.nvmrc` | Convenções básicas de editor e versão do Node |
-| `.github/pull_request_template.md`      | Template de PR                                |
-
-Todo o resto é seu. Nada aqui é intocável: se sua arquitetura pedir outra coisa, mude — e
-registre o porquê no `DECISIONS.md`.
-
-## Stack
-
-O uso desta stack é obrigatório, porque é a que usamos aqui:
-
-| Camada                 | Tecnologia                                     |
-| ---------------------- | ---------------------------------------------- |
-| Runtime                | Node.js 22+                                    |
-| Gerenciador de pacotes | pnpm                                           |
-| Backend                | NestJS + TypeScript                            |
-| ORM                    | Prisma                                         |
-| Banco                  | PostgreSQL                                     |
-| Mensageria             | Kafka                                          |
-| Frontend               | Next.js + React + Tailwind                     |
-| Testes                 | À sua escolha, desde que rodem no quality gate |
-
-Dentro dessa stack, a organização do código é sua: paradigma, camadas, modularização e
-estilo ficam a seu critério.
-
-## Subindo a infraestrutura
+Quality gate completo (lint + formatação) em todo o monorepo:
 
 ```bash
-cp .env.example .env
-docker compose up -d
+pnpm quality
 ```
 
-Serviços disponíveis depois disso:
+Testes por serviço:
 
-| Serviço  | Endereço              |
-| -------- | --------------------- |
-| Postgres | `localhost:5432`      |
-| Kafka    | `localhost:9092`      |
-| Kafka UI | http://localhost:8080 |
+```bash
+cd apps/transactions && pnpm test
+cd apps/anti-fraud && pnpm test
+cd apps/web && pnpm test
+```
 
-As portas das suas aplicações ficam a seu critério; o `.env.example` sugere 3001 para a API
-de transações, 3002 para o antifraude e 3000 para o dashboard.
+Build de produção do frontend:
 
-## Defesa do código
+```bash
+cd apps/web && pnpm build
+```
 
-Depois da entrega, conversamos sobre o código. Você vai percorrer as escolhas do
-`DECISIONS.md`, explicar por que cada uma foi feita e o que mudaria com outros requisitos.
+## Endpoints principais (`transactions`)
 
-Usar IA no dia a dia é normal e aqui também é — não é isso que estamos medindo. O que
-avaliamos é se você entende, sustenta e consegue mudar aquilo que entregou. Código que você
-não sabe explicar não conta a seu favor, tenha vindo de onde tiver vindo.
+| Método | Rota                                   | Descrição                                                                      |
+| ------ | -------------------------------------- | ------------------------------------------------------------------------------ |
+| `POST` | `/transactions`                        | Cria uma transação (status inicial `PENDING`)                                  |
+| `GET`  | `/transactions`                        | Lista paginada, com filtros `status`, `transferTypeId`, `startDate`, `endDate` |
+| `GET`  | `/transactions/:transactionExternalId` | Consulta uma transação específica                                              |
+| `GET`  | `/transactions/stream`                 | Server-Sent Events com atualizações em tempo real                              |
 
-## Como entregar
+## Kafka UI
 
-1. Faça um **fork** deste repositório
-2. Desenvolva no seu fork, com commits incrementais, seguindo o [PRACTICES.md](./PRACTICES.md)
-3. Compartilhe o fork com os avaliadores, em **Settings → Collaborators**:
+Disponível em `http://localhost:8080` após `docker compose up -d` — útil para inspecionar
+os tópicos `transaction.created` e `transaction.status.updated`.
 
-   - alex.silveira@biud.com.br
-   - marcelo.oliveira@biud.com.br
-   - gustavofarias@biud.com.br
+## Testando em um Codespace
 
-4. Avise a conclusão por e-mail dentro do prazo de **5 dias corridos**
-
-Ficou alguma dúvida sobre o enunciado? Pergunte — tirar dúvida faz parte do processo e não
-conta contra você.
-
-Boa sorte.
+Se estiver rodando em um GitHub Codespace, as portas `3000`, `3001` e `8080` precisam
+estar com visibilidade **Public** (aba **Ports** do VS Code) para acesso via navegador, e
+as variáveis `NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_SSE_URL` (em `apps/web/.env.local`) e
+`CORS_ORIGIN` (em `apps/transactions/.env`) precisam refletir as URLs públicas
+encaminhadas pelo Codespace, não `localhost`.
