@@ -275,3 +275,40 @@ em vez de biblioteca de UI adicional.
 **Por quê:** cobre o requisito do README sem introduzir dependência nova — os elementos
 nativos do HTML já resolvem o caso de uso sem necessidade de um date-picker customizado
 dado o escopo do desafio.
+
+## Volume alto de escritas e leituras concorrentes
+
+O maior risco em alto volume não é "muitas requisições" isoladamente — é concorrência
+sobre os mesmos dados: escritas competindo entre si (criação + atualização de status na
+mesma tabela) e leituras (dashboard) competindo com essas escritas pelos mesmos recursos
+do banco.
+
+**O que a arquitetura atual já mitiga:**
+
+- O fluxo assíncrono via Kafka já funciona como _buffer de absorção de pico_: a criação
+  de uma transação nunca espera o resultado do antifraude, então um pico de escritas na
+  entrada não trava o sistema — o Kafka absorve o volume e o consumer processa no ritmo
+  que consegue.
+- A atualização de status tem um único caminho de escrita (o consumer), reduzindo o risco
+  de duas escritas concorrentes na mesma linha por fontes diferentes.
+
+**O que seria adicionado para escalar:**
+
+1. **Read replica**: separar o banco que recebe escritas do banco que atende leituras do
+   dashboard, replicando de forma assíncrona. Isso evita que consultas de leitura
+   (listagem, filtros) disputem I/O e locks com o fluxo transacional de escrita.
+
+2. **Lock otimista na atualização de status**: se o volume de mensagens no Kafka
+   crescesse a ponto de mensagens duplicadas ou fora de ordem se tornarem um risco real
+   (cenário de "at-least-once delivery" já documentado), uma coluna de versão checada
+   antes do `UPDATE` evitaria que um evento antigo sobrescreva um mais recente.
+
+3. **Particionamento de tabela por período** (ex: mensal), reduzindo o tamanho de cada
+   busca/lock conforme o histórico cresce.
+
+4. **Cache com TTL para dados agregados do dashboard** (contagens por status, totais),
+   não invalidado por evento individual. Em alto volume, invalidar o cache a cada
+   transação (via SSE) anularia o benefício do cache — um TTL curto (poucos segundos)
+   equilibra "quase tempo real" com redução de carga no banco. O SSE continua fazendo
+   sentido para notificar mudança de um item específico que o usuário está observando,
+   não para manter agregados sempre frescos em escala.
