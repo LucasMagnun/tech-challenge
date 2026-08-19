@@ -1,282 +1,236 @@
 # Decisões de arquitetura
 
-## Organização do projeto
+Este documento registra as decisões técnicas tomadas ao longo do desafio, as alternativas
+consideradas e o porquê de cada escolha. Está organizado por tema, não por ordem
+cronológica de implementação.
 
-**Decisão:** monorepo com pnpm workspaces (`apps/transactions`, `apps/anti-fraud`, `apps/web`, `packages/shared`).
+## Sumário
 
-**Alternativas consideradas:** repositórios separados por serviço.
+- [Fundação do projeto](#fundação-do-projeto)
+- [Modelagem de dados](#modelagem-de-dados)
+- [Contratos e mensageria](#contratos-e-mensageria)
+- [Frontend](#frontend)
+- [Estratégia de testes](#estratégia-de-testes)
+- [Respostas obrigatórias do enunciado](#respostas-obrigatórias-do-enunciado)
+- [Notas técnicas de ambiente](#notas-técnicas-de-ambiente)
 
-**Por quê:** um único desenvolvedor no desafio, um único quality gate e CI, e os dois
+---
+
+## Fundação do projeto
+
+### Monorepo com pnpm workspaces
+
+**Decisão:** monorepo (`apps/transactions`, `apps/anti-fraud`, `apps/web`,
+`packages/shared`) em vez de repositórios separados por serviço.
+
+**Por quê:** um único desenvolvedor, um único quality gate e CI, e os dois
 serviços de backend compartilham o contrato dos eventos Kafka — colocar isso em
 `packages/shared` evita duplicar tipos. Repos separados fazem mais sentido em times
 grandes com deploy independente por serviço, mas adicionam overhead de publicar/versionar
 pacotes compartilhados que não se paga para este escopo.
 
-## Gerenciador de workspace
+**Alternativas consideradas:** repositórios separados por serviço; Turborepo/Nx por cima
+do pnpm (descartado — para três apps o ganho de cache/orquestração não justifica a
+complexidade extra de configuração).
 
-**Decisão:** pnpm workspaces (`pnpm-workspace.yaml`).
+### Nest CLI: standalone por app, não modo monorepo
 
-**Alternativas consideradas:** npm workspaces, Turborepo/Nx por cima do pnpm.
+**Decisão:** cada app Nest (`transactions`, `anti-fraud`) é gerado como projeto standalone
+dentro do workspace pnpm, não usando o modo monorepo nativo do Nest CLI.
 
-**Por quê:** pnpm é exigido pela stack do desafio e já resolve workspaces nativamente.
-Turborepo/Nx trariam cache de build e orquestração de tarefas mais sofisticada, mas para
-três apps o ganho não justifica a complexidade extra de configuração.
+**Por quê:** os dois serviços são deployáveis de forma independente — é o próprio ponto do
+desafio. O modo monorepo do Nest foi pensado para projetos com build/deploy fortemente
+acoplados; empilhá-lo sobre o monorepo do pnpm seria complexidade redundante.
 
-## Lint e formatação
+### Lint, formatação e TypeScript compartilhado
 
-**Decisão:** ESLint + Prettier, com hook de pre-commit via husky + lint-staged.
-
-**Alternativas consideradas:** Biome (lint + format em um único binário, mais rápido).
+**Decisão:** ESLint + Prettier (hook de pre-commit via husky + lint-staged) e
+`tsconfig.base.json` na raiz com modo estrito, estendido por cada app.
 
 **Por quê:** ESLint + Prettier tem suporte mais maduro para regras type-aware e para
-frameworks específicos (NestJS, Next.js), além de ser o padrão mais reconhecido. Biome é
-mais rápido mas ainda tem cobertura mais fraca nesses dois pontos — trade-off que não vale
-a pena para este projeto.
-
-## Configuração de TypeScript compartilhada
-
-**Decisão:** `tsconfig.base.json` na raiz, com modo estrito, estendido pelo `tsconfig.json`
-de cada app.
-
-**Alternativas consideradas:** cada app com config TS independente, sem herança.
-
-**Por quê:** evita duplicar as mesmas opções em três lugares e garante que nenhum app
-"escapa" do modo estrito sem que isso fique explícito no diff.
+frameworks específicos (NestJS, Next.js) que Biome (alternativa considerada, descartada
+pela cobertura mais fraca nesses pontos). O `tsconfig` compartilhado evita duplicar as
+mesmas opções em cada app e garante que nenhum app "escapa" do modo estrito sem que isso
+fique explícito no diff.
 
 ---
 
 ## Modelagem de dados
 
-_(pendente)_
+**Decisão:** entidade única `Transaction`, com os seguintes campos e tipos:
 
-## Formato dos eventos
+| Campo                                               | Tipo                                     | Motivo                                                                                                                                                                                      |
+| --------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                                                | UUID (`@default(uuid())`)                | Não expõe volume de negócio como um autoincremento exporia; é gerado sem coordenação central, importante já que viaja dentro dos eventos Kafka como identificador lógico entre os serviços. |
+| `value`                                             | `Decimal(12,2)`                          | `Float` usa ponto flutuante binário, que não representa exatamente frações decimais — inaceitável para valores monetários. `Decimal` no Postgres armazena o valor exato.                    |
+| `status`                                            | `enum` (`PENDING`/`APPROVED`/`REJECTED`) | Vira uma constraint real no Postgres (tipo `ENUM`), tornando impossível gravar um status inválido mesmo por bug — diferente de uma `String` solta.                                          |
+| `accountExternalIdDebit`, `accountExternalIdCredit` | `String`                                 | Recebidos e armazenados como enviados pelo cliente, sem validação de existência — não há entidade de "conta" modelada no sistema, nem exigência disso no escopo do desafio.                 |
+| `transferTypeId`                                    | `Int`                                    | Armazenado e ecoado de volta como `transactionType.name`; o enunciado não define um catálogo de tipos nem regra de negócio associada, então é tratado como metadado opaco.                  |
 
-_(pendente)_
+---
 
-## Tratamento de falha na mensageria
+## Contratos e mensageria
 
-_(pendente)_
+### Formato dos eventos Kafka
 
-## Atualização de status na interface
+**Decisão:** o README deixa o formato do payload dos eventos livre, exigindo apenas
+consistência entre publicador e consumidor. Os dois eventos do fluxo foram definidos como:
 
-_(pendente)_
+- `transaction.created`: `{ transactionId, amount, createdAt }`
+- `transaction.status.updated`: `{ transactionId, status }`
 
-## Estratégia de testes
+**Nota técnica relevante:** o campo de valor monetário do evento se chama `amount`, não
+`value`. O `KafkaRequestSerializer` do `@nestjs/microservices` verifica se o payload
+publicado via `emit()` contém as chaves `key` ou `value` para decidir se o objeto já é uma
+mensagem Kafka pronta (`{ key, value, headers }`) — nesse caso ele extrai apenas esse campo
+e descarta o resto do objeto, silenciosamente, sem erro. Como uma versão inicial do schema
+usava `value`, apenas o número era publicado no tópico, perdendo `transactionId` e
+`createdAt`. É um comportamento documentado da biblioteca ([nestjs/nest#12886](https://github.com/nestjs/nest/issues/12886)); a correção foi renomear o campo.
 
-_(pendente)_
-
-## Volume alto de escritas e leituras concorrentes
-
-_(pendente — resposta obrigatória pelo enunciado, não precisa implementar, só defender)_
-
-## Nota técnica: versão do TypeScript
-
-O projeto fixa `typescript` na série 6.x (`^6`) em vez da 7.x mais recente porque o
-TypeScript 7.0 (lançado em julho/2026, compilador nativo em Go) ainda não expõe a API
-programática estável que o `typescript-eslint` depende para funcionar — essa API só chega
-na versão 7.1. Assim que 7.1 sair e o `typescript-eslint` anunciar suporte, vale reavaliar
-a atualização.
-
-## Nest CLI: standalone por app, não modo monorepo
-
-**Decisão:** cada app Nest (`transactions`, `anti-fraud`) é gerado como projeto standalone
-dentro do workspace pnpm, não usando o modo monorepo nativo do Nest CLI (`nest generate app`).
-
-**Por quê:** os dois serviços são deployáveis de forma independente — é o próprio ponto do
-desafio. O modo monorepo do Nest foi pensado para projetos com build/deploy fortemente
-acoplados. Empilhar o monorepo do Nest sobre o monorepo do pnpm seria complexidade
-redundante (duas ferramentas de orquestração fazendo o mesmo papel).
-
-## Nota técnica: ajustes de tsconfig por mudanças recentes do TypeScript
-
-O `tsconfig.json` de cada app precisou de `rootDir` explícito (exigido pelas versões
-recentes do TS ao usar `declaration` + `outDir`) e não usa mais `baseUrl` (opção em
-descontinuação a partir do TS 7). `@types/node` precisou ser referenciado explicitamente
-via `"types": ["node"]` em alguns casos, já que a resolução automática de tipos globais
-ficou mais rígida com `moduleResolution: nodenext`.
-
-## Nota técnica: incremental do TS em conflito com deleteOutDir do Nest
-
-`tsconfig.json` não usa `"incremental": true`. Em conjunto com `"deleteOutDir": true`
-(nest-cli.json), o cache incremental do TypeScript perdia sincronia após a pasta `dist/`
-ser apagada pelo Nest a cada rebuild em watch mode: o compilador reportava "0 erros" mas
-não reemitia os arquivos `.js`, deixando `dist/` incompleto (só `.d.ts`, sem `main.js`).
-
-## Validação de payload: Zod em vez de class-validator
+### Validação de payload: Zod em vez de class-validator
 
 **Decisão:** validação de entrada via schemas Zod (`packages/shared`), não
-`class-validator`/`class-transformer`.
+`class-validator`/`class-transformer` (alternativa mais reconhecida como "o jeito Nest" de
+validar DTOs).
 
-**Alternativas consideradas:** `class-validator` com decorators nas classes DTO — é o
-padrão mais usado em projetos Nest, com integração nativa via `ValidationPipe`.
+**Por quê:** os dois serviços de backend trocam eventos via Kafka que precisam concordar
+sobre o mesmo formato de dado. Um schema Zod é um valor comum (não depende de
+decorators/reflection), então o mesmo schema valida tanto o corpo de uma requisição HTTP
+quanto o payload de um evento Kafka recebido como `unknown` — e o tipo TypeScript
+correspondente (`z.infer`) é derivado automaticamente do schema, sem duplicar "regra de
+validação" e "definição de tipo" em dois lugares.
 
-**Por quê:** o projeto tem dois serviços (`transactions`, `anti-fraud`) trocando eventos
-via Kafka que precisam concordar sobre o mesmo formato de dado. Um schema Zod é um valor
-comum (não depende de decorators/reflection), então o mesmo schema pode validar tanto o
-corpo de uma requisição HTTP quanto o payload de um evento Kafka recebido como `unknown`
-— e o tipo TypeScript correspondente (`z.infer`) é derivado automaticamente do schema, sem
-duplicar "regra de validação" e "definição de tipo" em dois lugares. Isso concentra o
-contrato de dados de uma transação em um único ponto (`packages/shared`), consumido pelos
-dois serviços.
+**Trade-off aceito:** Zod exige um Pipe customizado (`ZodValidationPipe`, escrito
+manualmente), diferente do `ValidationPipe` nativo do Nest para `class-validator`. Esse
+custo de setup é pago pela eliminação de duplicação de contrato entre serviços.
 
-O trade-off aceito: `class-validator` é mais reconhecido como "o jeito Nest" de validar
-DTOs e não exige um Pipe customizado (`ZodValidationPipe`, escrito manualmente); Zod exige
-esse passo extra de integração, mas paga esse custo de setup ao evitar duplicação de
-contrato entre serviços.
+### Publicação assíncrona e tratamento de falha na mensageria
 
-## Publicacao do evento Kafka
+**Decisão:** `TransactionsService` chama `kafkaClient.emit(...)` sem aguardar confirmação
+antes de retornar a resposta HTTP (fire-and-forget).
 
-**Decisão:** `TransactionsService` chama `kafkaClient.emit(...)` sem aguardar
-confirmação antes de retornar a resposta HTTP.
+**Por quê:** o fluxo síncrono (criar transação, responder ao cliente) não deve depender da
+disponibilidade ou latência do Kafka — é o próprio ponto de ter validação assíncrona via
+evento, em vez de bloquear a requisição esperando o resultado do antifraude.
 
-**Por quê:** o fluxo síncrono (criar transação, responder ao cliente) não deve depender
-da disponibilidade ou latência do Kafka — é o próprio ponto de ter validação assíncrona
-via evento, em vez de bloquear a requisição esperando o resultado do antifraude.
-
-**Caminho triste identificado, ainda não coberto:** se a publicação do evento falhar
+**Caminho triste identificado, não coberto neste escopo:** se a publicação do evento falhar
 silenciosamente (broker indisponível, erro de rede), a transação permanece em `PENDING`
 indefinidamente, sem que ninguém seja notificado. Mitigação futura considerada: capturar
-erro de `emit` com um `.catch()`/listener de erro do client Kafka e ao menos logar a
-falha; uma solução mais robusta (fila de retry, job de reconciliação que varre
-transações `PENDING` antigas) fica fora do escopo deste desafio, mas é o tipo de gap que
-existiria em produção.
-cat >> DECISIONS.md << 'EOF'
+erro de `emit` com um listener de erro do client Kafka e ao menos logar a falha; uma
+solução mais robusta (fila de retry, job de reconciliação que varre transações `PENDING`
+antigas) fica fora do escopo deste desafio, mas é o tipo de gap que existiria em produção.
 
-## Nota técnica: campo "value" no evento colide com serializer do Kafka do Nest
+Do lado do consumidor (`anti-fraud` e o consumer de status em `transactions`), payloads
+inválidos (`safeParse` do Zod falhando) são logados e descartados em vez de derrubar o
+processo — evita que uma mensagem malformada trave o consumer tentando reprocessá-la
+indefinidamente.
 
-O evento `transaction.created` usa o campo `amount`, não `value`, para o valor monetário.
-O `KafkaRequestSerializer` do `@nestjs/microservices` verifica se o payload publicado via
-`emit()` contém as chaves `key` ou `value` para decidir se o objeto já é uma mensagem Kafka
-pronta (`{ key, value, headers }`) — nesse caso ele extrai apenas o campo `value` e descarta
-o resto do objeto, silenciosamente, sem erro. Como o schema original usava `value` para o
-valor da transação, apenas esse número era publicado no tópico, perdendo `transactionId` e
-`createdAt`. É um comportamento documentado da biblioteca (nestjs/nest#12886); a correção
-foi renomear o campo no contrato do evento.
-
-## Transactions como aplicacao hibrida (HTTP + Kafka consumer)
-
-**Decisão:** o serviço `transactions` roda HTTP e consumer Kafka no mesmo processo, via
-`app.connectMicroservice()` + `app.startAllMicroservices()`.
-
-**Alternativas consideradas:** um terceiro processo/serviço separado só para consumir
-`transaction.status.updated`.
-
-**Por quê:** o consumer só precisa fazer uma coisa simples (atualizar o status no banco
-que o próprio `transactions` já possui e gerencia). Separar em outro processo adicionaria
-deploy e operação extra sem benefício real, já que não há necessidade de escalar o
-consumo de status independentemente da API HTTP neste escopo.
-
-## Consumer group separado para o consumer de status
+### Consumer groups e app híbrido
 
 **Decisão:** o consumer de `transaction.status.updated` no `transactions` usa
 `groupId: transactions-consumer-group`, diferente do `anti-fraud-consumer-group` usado
-pelo `anti-fraud`.
+pelo `anti-fraud` — cada serviço precisa do seu próprio grupo para garantir que ambos
+recebem todas as mensagens dos tópicos aos quais estão inscritos.
 
-**Por quê:** cada serviço precisa do seu próprio consumer group para garantir que ambos
-recebem todas as mensagens dos tópicos aos quais estão inscritos — grupos compartilhados
-fariam os serviços competirem pelas mesmas mensagens de tópicos diferentes, quebrando o
-fluxo bidirecional do desafio.
+O `transactions` roda HTTP e consumer Kafka no mesmo processo (`app.connectMicroservice()`
 
-## Atualizacao de status na UI: polling (temporario) -> SSE
+- `app.startAllMicroservices()`), em vez de um terceiro serviço dedicado só a consumir o
+  evento de retorno — o consumer só precisa atualizar o status no banco que o próprio
+  `transactions` já gerencia, não havendo necessidade de escalar esse consumo
+  independentemente da API HTTP neste escopo.
 
-**Decisão final:** Server-Sent Events (SSE), com um endpoint `GET /transactions/stream` no
-`transactions` que empurra atualizações em tempo real para os clientes conectados.
+### Contrato REST alinhado ao README oficial
+
+**Decisão:** `POST /transactions` e `GET /transactions` seguem os campos especificados na
+seção "Contratos" do README (`accountExternalIdDebit`, `accountExternalIdCredit`,
+`transferTypeId` na entrada; `transactionExternalId`, `transactionType.name`,
+`transactionStatus.name`, `value`, `createdAt` na saída).
+
+O frontend gera `accountExternalIdDebit`/`accountExternalIdCredit` via
+`crypto.randomUUID()` a cada submissão, e usa `transferTypeId` fixo (`1`) — a interface
+não tem conceito de login/contas de usuário, então pedir esses campos manualmente
+adicionaria complexidade fora do escopo de UX para o desafio.
+
+### Endpoint de detalhe e filtros
+
+**Decisão:** `GET /transactions/:transactionExternalId` para consulta individual
+(`404` via `NotFoundException` se não existir), e `GET /transactions` aceita filtros
+opcionais por `status`, `transferTypeId` e período (`startDate`/`endDate`, comparados
+contra `createdAt`) além da paginação (`page`/`limit`, padrão 10, teto 100 por página).
+
+**Por quê período como startDate/endDate:** é o padrão mais comum em dashboards.
+Presets de UI ("hoje", "7 dias") são implementáveis no frontend como atalhos que
+calculam essas duas datas, sem exigir mudança na API.
+
+**Detalhe de implementação:** `@Sse('stream')` precisa ser declarado antes de
+`@Get(':transactionExternalId')` no controller — caso contrário, o Nest resolveria
+`GET /transactions/stream` como se "stream" fosse um `transactionExternalId`.
+
+---
+
+## Frontend
+
+### Atualização de status: SSE
+
+**Decisão final:** Server-Sent Events, com um endpoint `GET /transactions/stream` no
+`transactions` que empurra atualizações em tempo real para os clientes conectados
+(alimentado por um `Subject` do RxJS que conecta tanto a criação via HTTP quanto a
+atualização via consumer Kafka).
 
 **Alternativas consideradas:** WebSocket (descartado por ser bidirecional sem necessidade
-real aqui — o fluxo é unidirecional, servidor para cliente) e polling HTTP simples.
+real aqui — o fluxo é unidirecional, servidor para cliente, e WebSocket implicaria tratar
+concorrência de conexões que não se aplica ao caso de uso) e polling HTTP simples (usado
+como implementação temporária durante o desenvolvimento, permitindo validar a interface de
+ponta a ponta antes do endpoint SSE existir).
 
 **Por quê SSE:** roda sobre HTTP comum, o navegador reconecta sozinho em caso de queda, e
 não exige tratar concorrência de conexões bidirecionais que o WebSocket implicaria sem
 necessidade real para este caso de uso.
 
-**Nota de implementação:** o scaffold inicial do frontend usa polling como implementação temporária, permitindo validar a interface de ponta a ponta
-antes do endpoint SSE existir no backend. A troca de polling para SSE (branch seguinte)
-altera apenas a forma de obter dados no frontend — o restante da UI permanece igual.
+### Paginação, filtros e tela de detalhe
 
-## Paginacao no GET /transactions
+**Decisão:** listagem paginada com filtros (status, tipo, período) mapeando diretamente
+para os query params do backend, usando inputs nativos (`select`, `date`) em vez de
+biblioteca de UI adicional — suficiente para o escopo, sem dependência nova.
 
-**Decisão:** listagem paginada (`page`/`limit` via query string), com tamanho de página
-padrão de 10 e teto máximo de 100 por página.
+Tela de detalhe como rota própria do App Router (`/transactions/[id]`), não modal: URL
+compartilhável/navegável, funciona com back/forward do navegador, e é mais simples de
+testar isoladamente que gerenciar estado de abertura/fechamento de modal.
 
-**Por quê:** evita que a API retorne o volume inteiro de transações em uma única resposta
-conforme a base cresce — conecta diretamente com a preocupação de "volume alto de leituras
-e escritas concorrentes" que o desafio pede para endereçar. O teto de 100 protege contra
-uso indevido do parâmetro `limit` (alguém pedindo uma página muito grande de propósito).
+---
 
-## SSE limitado a primeira pagina no frontend
+## Estratégia de testes
 
-**Decisão:** atualizações em tempo real via SSE só são refletidas na lista quando o
-usuário está na primeira página.
+**Abordagem adotada:** testes unitários com mocks nos três serviços, cobrindo as regras de
+negócio e os caminhos triste/feliz de cada um:
 
-**Por quê:** com paginação, inserir um item novo em tempo real em qualquer página que não
-seja a mais recente quebraria a consistência visual (itens se deslocando entre páginas
-sem o usuário navegar). Nas páginas 2+, os dados ficam estáticos até nova navegação.
+- `transactions`: `TransactionsService` (criação, listagem com filtros/paginação, consulta
+  individual, atualização de status via evento — incluindo payload inválido) com
+  `PrismaService` e `ClientKafka` mockados.
+- `anti-fraud`: `AntiFraudService` (aprovação, rejeição, payload inválido) com `ClientKafka`
+  mockado.
+- `web`: testes de componente com Testing Library, mockando `fetch` e `EventSource`,
+  cobrindo submissão de formulário, validação, filtros, paginação e a tela de detalhe
+  (incluindo o caso de "não encontrada").
 
-## Contrato REST alinhado ao README oficial
+**Por quê unitário com mock em vez de integração/e2e como abordagem principal:**
+testes unitários isolam a lógica de negócio de forma rápida e
+sem depender de infraestrutura externa (Postgres, Kafka) rodando durante o
+CI. Essa é uma limitação assumida conscientemente: não há cobertura de teste de integração
+real (aplicação completa + banco real) neste momento — seria o próximo passo natural para
+aumentar a confiança antes de um ambiente de produção.
 
-**Decisão:** `POST /transactions` e `GET /transactions` seguem exatamente os campos
-especificados na seção "Contratos" do README (`accountExternalIdDebit`,
-`accountExternalIdCredit`, `transferTypeId` na entrada; `transactionExternalId`,
-`transactionType.name`, `transactionStatus.name`, `value`, `createdAt` na saída),
-diferente da versão simplificada usada até esta branch.
+**Jest em vez de Vitest no frontend:** por consistência de ferramenta com os dois serviços
+de backend, mesmo Vitest tendo melhor integração nativa com Next/Turbopack. O NestJS foi
+construído com Jest como referência (`@nestjs/testing` é desenhado em cima da API de mocks
+do Jest), então trocar por Vitest no backend exigiria reconfigurar uma integração que já
+funciona nativamente, sem ganho real dado o tamanho das suites.
 
-**Desvios conscientes do exemplo literal:**
+---
 
-- `value` na resposta permanece como `string` (não `number`), preservando a precisão
-  decimal já documentada anteriormente — um `number` JS sofre os mesmos problemas de
-  ponto flutuante discutidos na decisão sobre `Decimal` vs `Float`.
-- `transactionType.name` é o `transferTypeId` convertido para string, sem um catálogo de
-  tipos: o enunciado não define quais tipos existem nem regra de negócio associada a eles
-  neste desafio, então o campo é tratado como metadado opaco ecoado de volta.
-- Não existe entidade de "conta" no sistema: `accountExternalIdDebit`/
-  `accountExternalIdCredit` são armazenados como recebidos, sem validação de existência —
-  não há requisito no enunciado para modelar contas.
+## Respostas obrigatórias do enunciado
 
-## Geracao de GUIDs de conta no frontend
-
-**Decisão:** o frontend gera `accountExternalIdDebit`/`accountExternalIdCredit` via
-`crypto.randomUUID()` a cada submissão, e usa `transferTypeId` fixo (`1`).
-
-**Por quê:** a interface não tem conceito de login/contas de usuário — pedir esses campos
-manualmente no formulário adicionaria complexidade de UX sem valor real para o escopo do
-desafio. Gerar automaticamente satisfaz o contrato exigido pela API sem exigir modelagem
-de conta que não foi pedida.
-
-## Endpoint de detalhe e filtros na listagem
-
-**Decisão:** `GET /transactions/:transactionExternalId` para consulta individual, e
-`GET /transactions` aceita filtros opcionais por `status`, `transferTypeId` e período
-(`startDate`/`endDate`, comparados contra `createdAt`).
-
-**Por quê período como startDate/endDate:** é o padrão mais comum em dashboards (Stripe,
-Google Analytics, painéis administrativos em geral). Presets de UI ("hoje", "7 dias") são
-implementáveis no frontend como atalhos que calculam essas duas datas, sem exigir mudança
-na API.
-
-**Ordem de rotas no controller:** `@Sse('stream')` precisa ser declarado antes de
-`@Get(':transactionExternalId')` — caso contrário, o Nest resolveria `GET /transactions/stream`
-como se "stream" fosse um `transactionExternalId`, quebrando a rota de tempo real.
-
-## Tela de detalhe como rota propria, nao modal
-
-**Decisão:** `/transactions/[id]` como rota dedicada do App Router, em vez de modal
-sobreposto à lista.
-
-**Por quê:** URL compartilhável/navegável, funciona com back/forward do navegador, e é
-mais simples de testar isoladamente (componente próprio, sem gerenciar estado de
-abertura/fechamento de modal).
-
-## Filtros da listagem: status, tipo, periodo
-
-**Decisão:** filtros no frontend mapeiam diretamente para os query params do backend
-(`status`, `transferTypeId`, `startDate`/`endDate`), com inputs nativos (`select`, `date`)
-em vez de biblioteca de UI adicional.
-
-**Por quê:** cobre o requisito do README sem introduzir dependência nova — os elementos
-nativos do HTML já resolvem o caso de uso sem necessidade de um date-picker customizado
-dado o escopo do desafio.
-
-## Volume alto de escritas e leituras concorrentes
+### Volume alto de escritas e leituras concorrentes
 
 O maior risco em alto volume não é "muitas requisições" isoladamente — é concorrência
 sobre os mesmos dados: escritas competindo entre si (criação + atualização de status na
@@ -285,30 +239,58 @@ do banco.
 
 **O que a arquitetura atual já mitiga:**
 
-- O fluxo assíncrono via Kafka já funciona como _buffer de absorção de pico_: a criação
-  de uma transação nunca espera o resultado do antifraude, então um pico de escritas na
+- O fluxo assíncrono via Kafka funciona como _buffer de absorção de pico_: a criação de
+  uma transação nunca espera o resultado do antifraude, então um pico de escritas na
   entrada não trava o sistema — o Kafka absorve o volume e o consumer processa no ritmo
   que consegue.
 - A atualização de status tem um único caminho de escrita (o consumer), reduzindo o risco
   de duas escritas concorrentes na mesma linha por fontes diferentes.
+- A listagem já é paginada, evitando que a API retorne o volume inteiro de transações em
+  uma única resposta conforme a base cresce.
 
-**O que seria adicionado para escalar:**
+**O que seria adicionado para escalar além deste desafio:**
 
 1. **Read replica**: separar o banco que recebe escritas do banco que atende leituras do
-   dashboard, replicando de forma assíncrona. Isso evita que consultas de leitura
-   (listagem, filtros) disputem I/O e locks com o fluxo transacional de escrita.
-
-2. **Lock otimista na atualização de status**: se o volume de mensagens no Kafka
-   crescesse a ponto de mensagens duplicadas ou fora de ordem se tornarem um risco real
-   (cenário de "at-least-once delivery" já documentado), uma coluna de versão checada
-   antes do `UPDATE` evitaria que um evento antigo sobrescreva um mais recente.
-
+   dashboard, replicando de forma assíncrona — evita que consultas de leitura disputem I/O
+   e locks com o fluxo transacional de escrita.
+2. **Lock otimista na atualização de status**: se o volume de mensagens no Kafka crescesse
+   a ponto de mensagens duplicadas ou fora de ordem se tornarem um risco real (cenário de
+   "at-least-once delivery" já documentado), uma coluna de versão checada antes do
+   `UPDATE` evitaria que um evento antigo sobrescreva um mais recente.
 3. **Particionamento de tabela por período** (ex: mensal), reduzindo o tamanho de cada
    busca/lock conforme o histórico cresce.
+4. **Cache com TTL para dados agregados do dashboard** (contagens por status, totais), não
+   invalidado por evento individual — em alto volume, invalidar a cada transação via SSE
+   anularia o benefício do cache. Um TTL curto (poucos segundos) equilibra "quase tempo
+   real" com redução de carga no banco. O SSE continua fazendo sentido para notificar
+   mudança de um item específico que o usuário está observando, não para manter agregados
+   sempre frescos em escala.
 
-4. **Cache com TTL para dados agregados do dashboard** (contagens por status, totais),
-   não invalidado por evento individual. Em alto volume, invalidar o cache a cada
-   transação (via SSE) anularia o benefício do cache — um TTL curto (poucos segundos)
-   equilibra "quase tempo real" com redução de carga no banco. O SSE continua fazendo
-   sentido para notificar mudança de um item específico que o usuário está observando,
-   não para manter agregados sempre frescos em escala.
+---
+
+## Notas técnicas de ambiente
+
+Detalhes de configuração e problemas de ferramental resolvidos ao longo do
+desenvolvimento — não são decisões de arquitetura, mas documentam ajustes não óbvios.
+
+- **Versão do TypeScript fixada em `^6`:** o TypeScript 7.0 (compilador nativo em Go,
+  lançado em julho/2026) ainda não expõe a API programática estável da qual o
+  `typescript-eslint` depende (prevista para a 7.1).
+- **`rootDir` explícito e remoção de `baseUrl`** nos `tsconfig.json` dos apps: exigido
+  pelas versões recentes do TS ao usar `declaration` + `outDir`; `baseUrl` está em
+  descontinuação a partir do TS 7. `@types/node` precisou ser referenciado via
+  `"types": ["node"]` em alguns casos, dado que `moduleResolution: nodenext` ficou mais
+  rígido na resolução automática de tipos globais.
+- **`incremental` do TypeScript desabilitado:** em conjunto com `deleteOutDir: true`
+  (nest-cli.json), o cache incremental perdia sincronia após a pasta `dist/` ser apagada a
+  cada rebuild em watch mode — o compilador reportava "0 erros" mas não reemitia os
+  arquivos `.js`.
+- **`packages/shared` requer build manual:** o `package.json` do pacote aponta para
+  `dist/` (JS compilado), necessário para resolução de módulos ESM em tempo de execução —
+  apontar direto para `src/*.ts` falha porque `node` não executa TypeScript nativamente
+  neste setup. Sem uma ferramenta de orquestração de monorepo (Turborepo/Nx), essa
+  recompilação é manual após qualquer mudança no pacote.
+- **`pnpm-lock.yaml` fora da checagem do Prettier:** o pnpm pode reescrever pequenos
+  detalhes de formatação do lockfile durante `pnpm install` (inclusive em modo
+  `--frozen-lockfile`), fazendo `prettier --check` falhar de forma inconsistente entre o
+  commit local e a execução no CI.
