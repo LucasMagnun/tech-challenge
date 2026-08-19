@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import type { TransactionStatus } from '@tech-challenge/shared';
 
 type Transaction = {
@@ -18,6 +19,15 @@ type PaginatedResponse = {
   limit: number;
   totalPages: number;
 };
+
+type Filters = {
+  status: TransactionStatus | '';
+  transferTypeId: string;
+  startDate: string;
+  endDate: string;
+};
+
+const EMPTY_FILTERS: Filters = { status: '', transferTypeId: '', startDate: '', endDate: '' };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000';
 const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:3000/transactions/stream';
@@ -38,21 +48,33 @@ function formatCurrency(value: string) {
   return currencyFormatter.format(Number(value));
 }
 
+function buildQuery(page: number, filters: Filters) {
+  const params = new URLSearchParams({ page: String(page), limit: '10' });
+  if (filters.status) params.set('status', filters.status);
+  if (filters.transferTypeId) params.set('transferTypeId', filters.transferTypeId);
+  if (filters.startDate) params.set('startDate', new Date(filters.startDate).toISOString());
+  if (filters.endDate) params.set('endDate', new Date(filters.endDate).toISOString());
+  return params.toString();
+}
+
 export default function Home() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [value, setValue] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
 
-  const fetchTransactions = useCallback(async (targetPage: number) => {
+  const fetchTransactions = useCallback(async (targetPage: number, targetFilters: Filters) => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_URL}/transactions?page=${targetPage}&limit=10`);
+      const response = await fetch(
+        `${API_URL}/transactions?${buildQuery(targetPage, targetFilters)}`,
+      );
       if (!response.ok) return;
       const result = (await response.json()) as PaginatedResponse;
       setTransactions(result.data);
@@ -66,8 +88,8 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    fetchTransactions(page);
-  }, [page, fetchTransactions]);
+    fetchTransactions(page, filters);
+  }, [page, filters, fetchTransactions]);
 
   useEffect(() => {
     const eventSource = new EventSource(SSE_URL);
@@ -103,6 +125,23 @@ export default function Home() {
       eventSource.close();
     };
   }, []);
+
+  function handleValueChange(raw: string) {
+    const sanitized = raw.replace(/[^0-9.,]/g, '').replace(',', '.');
+    const parts = sanitized.split('.');
+    const normalized = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : sanitized;
+    setValue(normalized);
+  }
+
+  function handleFilterChange<K extends keyof Filters>(key: K, val: Filters[K]) {
+    setFilters((prev) => ({ ...prev, [key]: val }));
+    setPage(1);
+  }
+
+  function clearFilters() {
+    setFilters(EMPTY_FILTERS);
+    setPage(1);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -142,6 +181,8 @@ export default function Home() {
     }
   }
 
+  const hasActiveFilters = Object.values(filters).some(Boolean);
+
   return (
     <main className="mx-auto max-w-2xl p-8">
       <div className="mb-6 flex items-center justify-between">
@@ -152,13 +193,13 @@ export default function Home() {
         </span>
       </div>
 
-      <form onSubmit={handleSubmit} className="mb-8 flex gap-2">
+      <form onSubmit={handleSubmit} className="mb-6 flex gap-2">
         <input
           type="text"
           inputMode="decimal"
           placeholder="Valor da transação"
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => handleValueChange(e.target.value)}
           className="flex-1 rounded border border-gray-300 px-3 py-2 text-gray-900"
         />
         <button
@@ -172,30 +213,93 @@ export default function Home() {
 
       {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
 
+      <div className="mb-6 rounded border border-gray-200 p-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div>
+            <label htmlFor="status-filter" className="mb-1 block text-xs text-gray-500">
+              Status
+            </label>
+            <select
+              id="status-filter"
+              value={filters.status}
+              onChange={(e) =>
+                handleFilterChange('status', e.target.value as TransactionStatus | '')
+              }
+              className="w-full cursor-pointer rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-900"
+            >
+              <option value="">Todos</option>
+              <option value="PENDING">Pendente</option>
+              <option value="APPROVED">Aprovada</option>
+              <option value="REJECTED">Rejeitada</option>
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Tipo</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              placeholder="Ex: 1"
+              value={filters.transferTypeId}
+              onChange={(e) => handleFilterChange('transferTypeId', e.target.value)}
+              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-900"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">De</label>
+            <input
+              type="date"
+              value={filters.startDate}
+              onChange={(e) => handleFilterChange('startDate', e.target.value)}
+              className="w-full cursor-pointer rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-900"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Até</label>
+            <input
+              type="date"
+              value={filters.endDate}
+              onChange={(e) => handleFilterChange('endDate', e.target.value)}
+              className="w-full cursor-pointer rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-900"
+            />
+          </div>
+        </div>
+        {hasActiveFilters && (
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="mt-3 cursor-pointer text-xs text-blue-600 hover:underline"
+          >
+            Limpar filtros
+          </button>
+        )}
+      </div>
+
       {loading && transactions.length === 0 ? (
         <p className="text-sm text-gray-500">Carregando...</p>
       ) : (
         <ul className="space-y-2">
           {transactions.map((t) => (
-            <li
-              key={t.transactionExternalId}
-              className="flex items-center justify-between rounded border border-gray-200 px-4 py-3"
-            >
-              <div>
-                <p className="font-medium text-gray-900">{formatCurrency(t.value)}</p>
-                <p className="text-xs text-gray-500">
-                  {new Date(t.createdAt).toLocaleString('pt-BR')}
-                </p>
-              </div>
-              <span
-                className={`rounded-full px-3 py-1 text-xs font-medium ${statusStyles[t.transactionStatus.name]}`}
+            <li key={t.transactionExternalId}>
+              <Link
+                href={`/transactions/${t.transactionExternalId}`}
+                className="flex items-center justify-between rounded border border-gray-200 px-4 py-3 transition-colors hover:bg-gray-50"
               >
-                {t.transactionStatus.name}
-              </span>
+                <div>
+                  <p className="font-medium text-gray-900">{formatCurrency(t.value)}</p>
+                  <p className="text-xs text-gray-500">
+                    {new Date(t.createdAt).toLocaleString('pt-BR')}
+                  </p>
+                </div>
+                <span
+                  className={`rounded-full px-3 py-1 text-xs font-medium ${statusStyles[t.transactionStatus.name]}`}
+                >
+                  {t.transactionStatus.name}
+                </span>
+              </Link>
             </li>
           ))}
-          {transactions.length === 0 && (
-            <p className="text-sm text-gray-500">Nenhuma transação ainda.</p>
+          {transactions.length === 0 && !loading && (
+            <p className="text-sm text-gray-500">Nenhuma transação encontrada.</p>
           )}
         </ul>
       )}
