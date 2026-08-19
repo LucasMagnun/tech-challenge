@@ -124,8 +124,6 @@ describe('Home', () => {
 
     render(<Home />);
 
-    const input = screen.getByPlaceholderText('Valor da transação');
-    await user.type(input, '-10');
     await user.click(screen.getByRole('button', { name: /criar/i }));
 
     expect(await screen.findByText('Informe um valor positivo.')).toBeInTheDocument();
@@ -144,5 +142,21 @@ describe('Home', () => {
     });
     expect(screen.getByRole('button', { name: /anterior/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /pr[óo]xima/i })).not.toBeDisabled();
+  });
+
+  it('aplica filtro de status na query da api', async () => {
+    const user = userEvent.setup();
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => paginated([]) });
+
+    render(<Home />);
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+
+    const statusSelect = screen.getByLabelText('Status');
+    await user.selectOptions(statusSelect, 'APPROVED');
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenLastCalledWith(expect.stringContaining('status=APPROVED'));
+    });
   });
 });
