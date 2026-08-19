@@ -16,7 +16,7 @@ export const KAFKA_CLIENT = 'KAFKA_CLIENT';
           options: {
             client: {
               clientId: 'anti-fraud-producer',
-              brokers: [configService.get<string>('KAFKA_BROKER', 'localhost:9092')],
+              brokers: [configService.get<string>('KAFKA_BROKERS', 'localhost:9092')],
             },
             producer: {
               allowAutoTopicCreation: true,
