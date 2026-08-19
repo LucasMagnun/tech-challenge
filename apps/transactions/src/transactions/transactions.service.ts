@@ -3,6 +3,7 @@ import { ClientKafka } from '@nestjs/microservices';
 import { PrismaService } from '../prisma/prisma.service';
 import { KAFKA_CLIENT } from '../kafka/kafka.module';
 import { TransactionsEventsService } from './transactions-events.service';
+import { toTransactionResource } from './transactions.mapper';
 import {
   TransactionStatusUpdatedEventSchema,
   type CreateTransactionDto,
@@ -25,6 +26,9 @@ export class TransactionsService {
     const transaction = await this.prisma.transaction.create({
       data: {
         value: dto.value,
+        accountExternalIdDebit: dto.accountExternalIdDebit,
+        accountExternalIdCredit: dto.accountExternalIdCredit,
+        transferTypeId: dto.transferTypeId,
       },
     });
 
@@ -38,7 +42,7 @@ export class TransactionsService {
 
     this.kafkaClient.emit('transaction.created', event);
 
-    return transaction;
+    return toTransactionResource(transaction);
   }
 
   async findAll(page = 1, limit = DEFAULT_PAGE_SIZE) {
@@ -55,7 +59,7 @@ export class TransactionsService {
     ]);
 
     return {
-      data,
+      data: data.map(toTransactionResource),
       total,
       page: safePage,
       limit: safeLimit,

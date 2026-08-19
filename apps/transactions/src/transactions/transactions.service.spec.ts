@@ -41,32 +41,66 @@ describe('TransactionsService', () => {
     service = module.get<TransactionsService>(TransactionsService);
   });
 
-  it('deve criar uma transacao, publicar no kafka e emitir no sse', async () => {
-    const expected = {
+  const baseDto = {
+    accountExternalIdDebit: '11111111-1111-1111-1111-111111111111',
+    accountExternalIdCredit: '22222222-2222-2222-2222-222222222222',
+    transferTypeId: 1,
+    value: 150.5,
+  };
+
+  it('deve criar uma transacao, publicar no kafka, emitir no sse e retornar no formato do contrato', async () => {
+    const createdAt = new Date();
+    const stored = {
       id: 'uuid-fake',
+      accountExternalIdDebit: baseDto.accountExternalIdDebit,
+      accountExternalIdCredit: baseDto.accountExternalIdCredit,
+      transferTypeId: baseDto.transferTypeId,
       value: '150.50',
       status: 'PENDING',
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt,
+      updatedAt: createdAt,
     };
-    prisma.transaction.create.mockResolvedValue(expected);
+    prisma.transaction.create.mockResolvedValue(stored);
 
-    const result = await service.create({ value: 150.5 });
+    const result = await service.create(baseDto);
 
     expect(prisma.transaction.create).toHaveBeenCalledWith({
-      data: { value: 150.5 },
+      data: {
+        value: baseDto.value,
+        accountExternalIdDebit: baseDto.accountExternalIdDebit,
+        accountExternalIdCredit: baseDto.accountExternalIdCredit,
+        transferTypeId: baseDto.transferTypeId,
+      },
     });
-    expect(transactionsEvents.emit).toHaveBeenCalledWith(expected);
+    expect(transactionsEvents.emit).toHaveBeenCalledWith(stored);
     expect(kafkaClient.emit).toHaveBeenCalledWith('transaction.created', {
-      transactionId: expected.id,
+      transactionId: stored.id,
       amount: 150.5,
-      createdAt: expected.createdAt.toISOString(),
+      createdAt: createdAt.toISOString(),
     });
-    expect(result).toEqual(expected);
+    expect(result).toEqual({
+      transactionExternalId: 'uuid-fake',
+      transactionType: { name: '1' },
+      transactionStatus: { name: 'PENDING' },
+      value: '150.50',
+      createdAt: createdAt.toISOString(),
+    });
   });
 
-  it('deve listar transacoes paginadas ordenadas por data de criacao desc', async () => {
-    prisma.transaction.findMany.mockResolvedValue([]);
+  it('deve listar transacoes paginadas ordenadas por data de criacao desc, mapeadas para o contrato', async () => {
+    const createdAt = new Date();
+    prisma.transaction.findMany.mockResolvedValue([
+      {
+        id: 'uuid-1',
+        accountExternalIdDebit: 'a',
+        accountExternalIdCredit: 'b',
+        transferTypeId: 2,
+        value: '500',
+        status: 'APPROVED',
+        createdAt,
+        updatedAt: createdAt,
+      },
+    ]);
     prisma.transaction.count.mockResolvedValue(25);
 
     const result = await service.findAll(2, 10);
@@ -77,7 +111,15 @@ describe('TransactionsService', () => {
       take: 10,
     });
     expect(result).toEqual({
-      data: [],
+      data: [
+        {
+          transactionExternalId: 'uuid-1',
+          transactionType: { name: '2' },
+          transactionStatus: { name: 'APPROVED' },
+          value: '500',
+          createdAt: createdAt.toISOString(),
+        },
+      ],
       total: 25,
       page: 2,
       limit: 10,
@@ -99,6 +141,9 @@ describe('TransactionsService', () => {
   it('deve atualizar o status e emitir no sse quando o evento for valido', async () => {
     const updated = {
       id: '11111111-1111-1111-1111-111111111111',
+      accountExternalIdDebit: 'a',
+      accountExternalIdCredit: 'b',
+      transferTypeId: 1,
       value: '500',
       status: 'APPROVED',
       createdAt: new Date(),

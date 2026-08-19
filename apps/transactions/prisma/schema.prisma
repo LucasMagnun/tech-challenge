@@ -13,11 +13,14 @@ enum TransactionStatus {
 }
 
 model Transaction {
-  id        String            @id @default(uuid())
-  value     Decimal           @db.Decimal(12, 2)
-  status    TransactionStatus @default(PENDING)
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
+  id                      String            @id @default(uuid())
+  accountExternalIdDebit  String
+  accountExternalIdCredit String
+  transferTypeId          Int
+  value                   Decimal           @db.Decimal(12, 2)
+  status                  TransactionStatus @default(PENDING)
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
 
   @@map("transactions")
 }

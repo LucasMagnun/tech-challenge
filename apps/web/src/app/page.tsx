@@ -4,11 +4,11 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import type { TransactionStatus } from '@tech-challenge/shared';
 
 type Transaction = {
-  id: string;
+  transactionExternalId: string;
+  transactionType: { name: string };
+  transactionStatus: { name: TransactionStatus };
   value: string;
-  status: TransactionStatus;
   createdAt: string;
-  updatedAt: string;
 };
 
 type PaginatedResponse = {
@@ -21,6 +21,7 @@ type PaginatedResponse = {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000';
 const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:3000/transactions/stream';
+const DEFAULT_TRANSFER_TYPE_ID = 1;
 
 const statusStyles: Record<TransactionStatus, string> = {
   PENDING: 'bg-yellow-100 text-yellow-800',
@@ -77,16 +78,17 @@ export default function Home() {
     eventSource.onmessage = (event) => {
       const transaction = JSON.parse(event.data) as Transaction;
 
-      // Só refletimos atualizações em tempo real quando o usuário está na
-      // primeira página (a mais recente); nas demais, a paginação ficaria
-      // inconsistente se itens fossem inseridos/deslocados por baixo dele.
       setPage((currentPage) => {
         if (currentPage !== 1) return currentPage;
 
         setTransactions((prev) => {
-          const exists = prev.some((t) => t.id === transaction.id);
+          const exists = prev.some(
+            (t) => t.transactionExternalId === transaction.transactionExternalId,
+          );
           if (exists) {
-            return prev.map((t) => (t.id === transaction.id ? transaction : t));
+            return prev.map((t) =>
+              t.transactionExternalId === transaction.transactionExternalId ? transaction : t,
+            );
           }
           return [transaction, ...prev].slice(0, 10);
         });
@@ -117,7 +119,12 @@ export default function Home() {
       const response = await fetch(`${API_URL}/transactions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value: numericValue }),
+        body: JSON.stringify({
+          value: numericValue,
+          accountExternalIdDebit: crypto.randomUUID(),
+          accountExternalIdCredit: crypto.randomUUID(),
+          transferTypeId: DEFAULT_TRANSFER_TYPE_ID,
+        }),
       });
 
       if (!response.ok) {
@@ -171,7 +178,7 @@ export default function Home() {
         <ul className="space-y-2">
           {transactions.map((t) => (
             <li
-              key={t.id}
+              key={t.transactionExternalId}
               className="flex items-center justify-between rounded border border-gray-200 px-4 py-3"
             >
               <div>
@@ -181,9 +188,9 @@ export default function Home() {
                 </p>
               </div>
               <span
-                className={`rounded-full px-3 py-1 text-xs font-medium ${statusStyles[t.status]}`}
+                className={`rounded-full px-3 py-1 text-xs font-medium ${statusStyles[t.transactionStatus.name]}`}
               >
-                {t.status}
+                {t.transactionStatus.name}
               </span>
             </li>
           ))}

@@ -5,6 +5,7 @@ import { CreateTransactionSchema, type CreateTransactionDto } from '@tech-challe
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { TransactionsService } from './transactions.service';
 import { TransactionsEventsService } from './transactions-events.service';
+import { toTransactionResource } from './transactions.mapper';
 
 type SseMessage = { data: unknown };
 
@@ -30,7 +31,9 @@ export class TransactionsController {
 
   @Sse('stream')
   stream(): Observable<SseMessage> {
-    return this.transactionsEvents.stream().pipe(map((transaction) => ({ data: transaction })));
+    return this.transactionsEvents
+      .stream()
+      .pipe(map((transaction) => ({ data: toTransactionResource(transaction) })));
   }
 
   @EventPattern('transaction.status.updated')

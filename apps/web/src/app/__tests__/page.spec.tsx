@@ -14,6 +14,17 @@ class MockEventSource {
   }
 }
 
+function makeTransaction(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    transactionExternalId: '11111111-1111-1111-1111-111111111111',
+    transactionType: { name: '1' },
+    transactionStatus: { name: 'PENDING' },
+    value: '150.50',
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
 function paginated(data: unknown[], overrides: Partial<{ page: number; totalPages: number }> = {}) {
   return {
     data,
@@ -30,6 +41,8 @@ describe('Home', () => {
     MockEventSource.instances = [];
     // @ts-expect-error - mock simplificado do EventSource para os testes
     global.EventSource = MockEventSource;
+
+    jest.spyOn(global.crypto, 'randomUUID').mockReturnValue('00000000-0000-0000-0000-000000000000');
   });
 
   afterEach(() => {
@@ -39,16 +52,7 @@ describe('Home', () => {
   it('lista as transacoes retornadas pela api', async () => {
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
-      json: async () =>
-        paginated([
-          {
-            id: '1',
-            value: '150.50',
-            status: 'PENDING',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          },
-        ]),
+      json: async () => paginated([makeTransaction()]),
     });
 
     render(<Home />);
@@ -69,13 +73,13 @@ describe('Home', () => {
 
     act(() => {
       source.onmessage?.({
-        data: JSON.stringify({
-          id: '2',
-          value: '999',
-          status: 'APPROVED',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        }),
+        data: JSON.stringify(
+          makeTransaction({
+            transactionExternalId: '22222222-2222-2222-2222-222222222222',
+            value: '999',
+            transactionStatus: { name: 'APPROVED' },
+          }),
+        ),
       });
     });
 
@@ -85,11 +89,11 @@ describe('Home', () => {
     expect(screen.getByText('APPROVED')).toBeInTheDocument();
   });
 
-  it('envia uma nova transacao ao submeter o formulario', async () => {
+  it('envia uma nova transacao com os campos exigidos pelo contrato', async () => {
     const user = userEvent.setup();
     (global.fetch as jest.Mock)
       .mockResolvedValueOnce({ ok: true, json: async () => paginated([]) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, json: async () => makeTransaction() })
       .mockResolvedValueOnce({ ok: true, json: async () => paginated([]) });
 
     render(<Home />);
@@ -103,7 +107,12 @@ describe('Home', () => {
         expect.stringContaining('/transactions'),
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ value: 250 }),
+          body: JSON.stringify({
+            value: 250,
+            accountExternalIdDebit: '00000000-0000-0000-0000-000000000000',
+            accountExternalIdCredit: '00000000-0000-0000-0000-000000000000',
+            transferTypeId: 1,
+          }),
         }),
       );
     });
