@@ -211,3 +211,33 @@ usuário está na primeira página.
 **Por quê:** com paginação, inserir um item novo em tempo real em qualquer página que não
 seja a mais recente quebraria a consistência visual (itens se deslocando entre páginas
 sem o usuário navegar). Nas páginas 2+, os dados ficam estáticos até nova navegação.
+
+## Contrato REST alinhado ao README oficial
+
+**Decisão:** `POST /transactions` e `GET /transactions` seguem exatamente os campos
+especificados na seção "Contratos" do README (`accountExternalIdDebit`,
+`accountExternalIdCredit`, `transferTypeId` na entrada; `transactionExternalId`,
+`transactionType.name`, `transactionStatus.name`, `value`, `createdAt` na saída),
+diferente da versão simplificada usada até esta branch.
+
+**Desvios conscientes do exemplo literal:**
+
+- `value` na resposta permanece como `string` (não `number`), preservando a precisão
+  decimal já documentada anteriormente — um `number` JS sofre os mesmos problemas de
+  ponto flutuante discutidos na decisão sobre `Decimal` vs `Float`.
+- `transactionType.name` é o `transferTypeId` convertido para string, sem um catálogo de
+  tipos: o enunciado não define quais tipos existem nem regra de negócio associada a eles
+  neste desafio, então o campo é tratado como metadado opaco ecoado de volta.
+- Não existe entidade de "conta" no sistema: `accountExternalIdDebit`/
+  `accountExternalIdCredit` são armazenados como recebidos, sem validação de existência —
+  não há requisito no enunciado para modelar contas.
+
+## Geracao de GUIDs de conta no frontend
+
+**Decisão:** o frontend gera `accountExternalIdDebit`/`accountExternalIdCredit` via
+`crypto.randomUUID()` a cada submissão, e usa `transferTypeId` fixo (`1`).
+
+**Por quê:** a interface não tem conceito de login/contas de usuário — pedir esses campos
+manualmente no formulário adicionaria complexidade de UX sem valor real para o escopo do
+desafio. Gerar automaticamente satisfaz o contrato exigido pela API sem exigir modelagem
+de conta que não foi pedida.
