@@ -28,10 +28,10 @@ type Filters = {
 };
 
 const EMPTY_FILTERS: Filters = { status: '', transferTypeId: '', startDate: '', endDate: '' };
+const TRANSFER_TYPES = ['1', '2', '3'];
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000';
 const SSE_URL = process.env.NEXT_PUBLIC_SSE_URL ?? 'http://localhost:3000/transactions/stream';
-const DEFAULT_TRANSFER_TYPE_ID = 1;
 
 const statusStyles: Record<TransactionStatus, string> = {
   PENDING: 'bg-yellow-100 text-yellow-800',
@@ -57,16 +57,145 @@ function buildQuery(page: number, filters: Filters) {
   return params.toString();
 }
 
+function CreateTransactionModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [value, setValue] = useState('');
+  const [transferTypeId, setTransferTypeId] = useState(TRANSFER_TYPES[0]);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function handleValueChange(raw: string) {
+    const sanitized = raw.replace(/[^0-9.,]/g, '').replace(',', '.');
+    const parts = sanitized.split('.');
+    const normalized = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : sanitized;
+    setValue(normalized);
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+
+    const numericValue = Number(value);
+    if (!numericValue || numericValue <= 0) {
+      setError('Informe um valor positivo.');
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const response = await fetch(`${API_URL}/transactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          value: numericValue,
+          accountExternalIdDebit: crypto.randomUUID(),
+          accountExternalIdCredit: crypto.randomUUID(),
+          transferTypeId: Number(transferTypeId),
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.json();
+        setError(body.fieldErrors?.value?.[0] ?? 'Erro ao criar transação.');
+        return;
+      }
+
+      onCreated();
+      onClose();
+    } catch {
+      setError('Não foi possível conectar à API.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900">Nova transação</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="cursor-pointer text-gray-400 hover:text-gray-600"
+            aria-label="Fechar"
+          >
+            ✕
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label htmlFor="modal-value" className="mb-1 block text-sm text-gray-700">
+              Valor
+            </label>
+            <input
+              id="modal-value"
+              type="text"
+              inputMode="decimal"
+              placeholder="Valor da transação"
+              value={value}
+              onChange={(e) => handleValueChange(e.target.value)}
+              className="w-full rounded border border-gray-300 px-3 py-2 text-gray-900"
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <label htmlFor="modal-transfer-type" className="mb-1 block text-sm text-gray-700">
+              Tipo de transferência
+            </label>
+            <select
+              id="modal-transfer-type"
+              value={transferTypeId}
+              onChange={(e) => setTransferTypeId(e.target.value)}
+              className="w-full cursor-pointer rounded border border-gray-300 px-3 py-2 text-gray-900"
+            >
+              {TRANSFER_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  Tipo {type}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {error && <p className="text-sm text-red-600">{error}</p>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="cursor-pointer rounded border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="cursor-pointer rounded bg-blue-600 px-4 py-2 text-sm text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {submitting ? 'Enviando...' : 'Criar'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
-  const [value, setValue] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const fetchTransactions = useCallback(async (targetPage: number, targetFilters: Filters) => {
@@ -126,13 +255,6 @@ export default function Home() {
     };
   }, []);
 
-  function handleValueChange(raw: string) {
-    const sanitized = raw.replace(/[^0-9.,]/g, '').replace(',', '.');
-    const parts = sanitized.split('.');
-    const normalized = parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : sanitized;
-    setValue(normalized);
-  }
-
   function handleFilterChange<K extends keyof Filters>(key: K, val: Filters[K]) {
     setFilters((prev) => ({ ...prev, [key]: val }));
     setPage(1);
@@ -143,41 +265,11 @@ export default function Home() {
     setPage(1);
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-
-    const numericValue = Number(value);
-    if (!numericValue || numericValue <= 0) {
-      setError('Informe um valor positivo.');
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const response = await fetch(`${API_URL}/transactions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          value: numericValue,
-          accountExternalIdDebit: crypto.randomUUID(),
-          accountExternalIdCredit: crypto.randomUUID(),
-          transferTypeId: DEFAULT_TRANSFER_TYPE_ID,
-        }),
-      });
-
-      if (!response.ok) {
-        const body = await response.json();
-        setError(body.fieldErrors?.value?.[0] ?? 'Erro ao criar transação.');
-        return;
-      }
-
-      setValue('');
-      if (page !== 1) setPage(1);
-    } catch {
-      setError('Não foi possível conectar à API.');
-    } finally {
-      setSubmitting(false);
+  function handleTransactionCreated() {
+    if (page !== 1) {
+      setPage(1);
+    } else {
+      fetchTransactions(1, filters);
     }
   }
 
@@ -193,25 +285,20 @@ export default function Home() {
         </span>
       </div>
 
-      <form onSubmit={handleSubmit} className="mb-6 flex gap-2">
-        <input
-          type="text"
-          inputMode="decimal"
-          placeholder="Valor da transação"
-          value={value}
-          onChange={(e) => handleValueChange(e.target.value)}
-          className="flex-1 rounded border border-gray-300 px-3 py-2 text-gray-900"
-        />
-        <button
-          type="submit"
-          disabled={submitting}
-          className="cursor-pointer rounded bg-blue-600 px-4 py-2 text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {submitting ? 'Enviando...' : 'Criar'}
-        </button>
-      </form>
+      <button
+        type="button"
+        onClick={() => setModalOpen(true)}
+        className="mb-6 cursor-pointer rounded bg-blue-600 px-4 py-2 text-white transition-colors hover:bg-blue-700"
+      >
+        + Criar transação
+      </button>
 
-      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
+      {modalOpen && (
+        <CreateTransactionModal
+          onClose={() => setModalOpen(false)}
+          onCreated={handleTransactionCreated}
+        />
+      )}
 
       <div className="mb-6 rounded border border-gray-200 p-4">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -234,8 +321,11 @@ export default function Home() {
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-xs text-gray-500">Tipo</label>
+            <label htmlFor="type-filter" className="mb-1 block text-xs text-gray-500">
+              Tipo
+            </label>
             <input
+              id="type-filter"
               type="text"
               inputMode="numeric"
               placeholder="Ex: 1"
@@ -245,8 +335,11 @@ export default function Home() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-gray-500">De</label>
+            <label htmlFor="start-date-filter" className="mb-1 block text-xs text-gray-500">
+              De
+            </label>
             <input
+              id="start-date-filter"
               type="date"
               value={filters.startDate}
               onChange={(e) => handleFilterChange('startDate', e.target.value)}
@@ -254,8 +347,11 @@ export default function Home() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-gray-500">Até</label>
+            <label htmlFor="end-date-filter" className="mb-1 block text-xs text-gray-500">
+              Até
+            </label>
             <input
+              id="end-date-filter"
               type="date"
               value={filters.endDate}
               onChange={(e) => handleFilterChange('endDate', e.target.value)}
