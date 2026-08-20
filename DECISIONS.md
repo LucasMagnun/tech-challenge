@@ -232,6 +232,9 @@ funciona nativamente, sem ganho real dado o tamanho das suites.
 
 ### Volume alto de escritas e leituras concorrentes
 
+> Pergunta do enunciado: _"A aplicação pode precisar lidar com um volume alto de escritas
+> e leituras concorrentes. Como você abordaria esse requisito?"_
+
 O maior risco em alto volume não é "muitas requisições" isoladamente — é concorrência
 sobre os mesmos dados: escritas competindo entre si (criação + atualização de status na
 mesma tabela) e leituras (dashboard) competindo com essas escritas pelos mesmos recursos
@@ -239,7 +242,7 @@ do banco.
 
 **O que a arquitetura atual já mitiga:**
 
-- O fluxo assíncrono via Kafka funciona como _buffer de absorção de pico_: a criação de
+- O fluxo assíncrono via Kafka funciona como buffer de absorção de pico: a criação de
   uma transação nunca espera o resultado do antifraude, então um pico de escritas na
   entrada não trava o sistema — o Kafka absorve o volume e o consumer processa no ritmo
   que consegue.
