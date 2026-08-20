@@ -309,3 +309,15 @@ encerrando o processo (exceção não tratada). O problema é transitório: rein
 serviço após a primeira falha resolve, já que o tópico já existe na segunda tentativa.
 Mitigação não implementada neste escopo: tratar essa exceção especificamente com retry,
 ou pré-criar os tópicos explicitamente antes de subir os consumers.
+
+## Criacao de transacao via modal, com selecao de tipo
+
+**Decisão:** o formulário de criação de transação passa a viver dentro de um modal,
+acionado por um botão "+ Criar transação", em vez de ficar sempre visível inline no topo
+da página. O modal inclui um seletor de `transferTypeId` (1, 2 ou 3), permitindo variar o
+tipo da transação — antes fixo em `1`.
+
+**Por quê:** reflete melhor o padrão de um dashboard real, onde a ação de criar não
+precisa ocupar espaço permanente na tela; e resolve a limitação anterior de todas as
+transações nascerem com o mesmo `transferTypeId`, sem valor real para testar filtros por
+tipo.

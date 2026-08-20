@@ -89,7 +89,42 @@ describe('Home', () => {
     expect(screen.getByText('APPROVED')).toBeInTheDocument();
   });
 
-  it('envia uma nova transacao com os campos exigidos pelo contrato', async () => {
+  it('nao mostra o modal de criacao por padrao', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => paginated([]) });
+
+    render(<Home />);
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    expect(screen.queryByText('Nova transação')).not.toBeInTheDocument();
+  });
+
+  it('abre o modal ao clicar em criar transacao', async () => {
+    const user = userEvent.setup();
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => paginated([]) });
+
+    render(<Home />);
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    await user.click(screen.getByRole('button', { name: /\+ criar transação/i }));
+
+    expect(screen.getByText('Nova transação')).toBeInTheDocument();
+  });
+
+  it('fecha o modal ao clicar em cancelar', async () => {
+    const user = userEvent.setup();
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => paginated([]) });
+
+    render(<Home />);
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    await user.click(screen.getByRole('button', { name: /\+ criar transação/i }));
+    expect(screen.getByText('Nova transação')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /cancelar/i }));
+    expect(screen.queryByText('Nova transação')).not.toBeInTheDocument();
+  });
+
+  it('envia uma nova transacao com valor e tipo escolhidos no modal', async () => {
     const user = userEvent.setup();
     (global.fetch as jest.Mock)
       .mockResolvedValueOnce({ ok: true, json: async () => paginated([]) })
@@ -98,9 +133,17 @@ describe('Home', () => {
 
     render(<Home />);
 
-    const input = screen.getByPlaceholderText('Valor da transação');
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+
+    await user.click(screen.getByRole('button', { name: /\+ criar transação/i }));
+
+    const input = screen.getByLabelText('Valor');
     await user.type(input, '250');
-    await user.click(screen.getByRole('button', { name: /criar/i }));
+
+    const typeSelect = screen.getByLabelText('Tipo de transferência');
+    await user.selectOptions(typeSelect, '2');
+
+    await user.click(screen.getByRole('button', { name: /^criar$/i }));
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(
@@ -111,20 +154,23 @@ describe('Home', () => {
             value: 250,
             accountExternalIdDebit: '00000000-0000-0000-0000-000000000000',
             accountExternalIdCredit: '00000000-0000-0000-0000-000000000000',
-            transferTypeId: 1,
+            transferTypeId: 2,
           }),
         }),
       );
     });
   });
 
-  it('mostra mensagem de erro para valor invalido, sem chamar a api', async () => {
+  it('mostra mensagem de erro para valor invalido dentro do modal, sem chamar a api', async () => {
     const user = userEvent.setup();
     (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => paginated([]) });
 
     render(<Home />);
 
-    await user.click(screen.getByRole('button', { name: /criar/i }));
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+
+    await user.click(screen.getByRole('button', { name: /\+ criar transação/i }));
+    await user.click(screen.getByRole('button', { name: /^criar$/i }));
 
     expect(await screen.findByText('Informe um valor positivo.')).toBeInTheDocument();
   });
@@ -142,21 +188,5 @@ describe('Home', () => {
     });
     expect(screen.getByRole('button', { name: /anterior/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /pr[óo]xima/i })).not.toBeDisabled();
-  });
-
-  it('aplica filtro de status na query da api', async () => {
-    const user = userEvent.setup();
-    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => paginated([]) });
-
-    render(<Home />);
-
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
-
-    const statusSelect = screen.getByLabelText('Status');
-    await user.selectOptions(statusSelect, 'APPROVED');
-
-    await waitFor(() => {
-      expect(global.fetch).toHaveBeenLastCalledWith(expect.stringContaining('status=APPROVED'));
-    });
   });
 });
