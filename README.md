@@ -63,7 +63,7 @@ estão documentadas em [`DECISIONS.md`](./DECISIONS.md).
 6. Suba os três serviços (em terminais separados):
 
    ```bash
-   cd apps/transactions && pnpm start:dev   # http://localhost:3000
+   cd apps/transactions && pnpm start:dev   # http://localhost:3001
    ```
 
    ```bash
@@ -71,7 +71,7 @@ estão documentadas em [`DECISIONS.md`](./DECISIONS.md).
    ```
 
    ```bash
-   cd apps/web && pnpm dev                   # http://localhost:3001
+   cd apps/web && pnpm dev                   # http://localhost:3000
    ```
 
 ## Qualidade
@@ -96,7 +96,7 @@ Build de produção do frontend:
 cd apps/web && pnpm build
 ```
 
-## Endpoints principais (`transactions`)
+## Endpoints principais (`transactions`, porta 3001)
 
 | Método | Rota                                   | Descrição                                                                      |
 | ------ | -------------------------------------- | ------------------------------------------------------------------------------ |
@@ -110,10 +110,61 @@ cd apps/web && pnpm build
 Disponível em `http://localhost:8080` após `docker compose up -d` — útil para inspecionar
 os tópicos `transaction.created` e `transaction.status.updated`.
 
-## Testando em um Codespace
+## O que ficou de fora
 
-Se estiver rodando em um GitHub Codespace, as portas `3000`, `3001` e `8080` precisam
-estar com visibilidade **Public** (aba **Ports** do VS Code) para acesso via navegador, e
-as variáveis `NEXT_PUBLIC_API_URL`/`NEXT_PUBLIC_SSE_URL` (em `apps/web/.env.local`) e
-`CORS_ORIGIN` (em `apps/transactions/.env`) precisam refletir as URLs públicas
-encaminhadas pelo Codespace, não `localhost`.
+Limitações e gaps assumidos conscientemente, detalhados com mais contexto no
+[`DECISIONS.md`](./DECISIONS.md):
+
+- **Testes de integração/e2e reais**: a cobertura atual é unitária, com `PrismaService` e
+  `ClientKafka` mockados. Não há testes que rodem a aplicação completa contra um banco e
+  um broker Kafka reais.
+- **Tratamento de falha na publicação do evento Kafka**: se `kafkaClient.emit()` falhar
+  silenciosamente, a transação permanece em `PENDING` sem que ninguém seja notificado. Não
+  há retry automático nem job de reconciliação.
+- **Catálogo de tipos de transferência**: `transferTypeId` é armazenado e ecoado como
+  `transactionType.name`, mas não há validação contra uma lista de tipos válidos — o
+  enunciado não define esse catálogo.
+- **Entidade de conta**: `accountExternalIdDebit`/`accountExternalIdCredit` são
+  armazenados como recebidos, sem validação de existência — não há conceito de conta ou
+  usuário autenticado no sistema.
+- **Otimizações de escala para alto volume**: read replica, lock otimista na atualização
+  de status, particionamento de tabela e cache com TTL para dados agregados do dashboard
+  são discutidos como próximos passos na resposta sobre volume alto de leituras/escritas
+  concorrentes, mas não implementados.
+
+## ⚠️ Rodando em um GitHub Codespace
+
+Isso é importante e fácil de esquecer: em um Codespace, o navegador roda na sua máquina
+local, não dentro do Codespace — então `localhost` nas variáveis de ambiente do frontend
+não funciona para acesso via navegador (funciona normalmente para `curl`/testes dentro do
+próprio terminal do Codespace, já que aí `localhost` é o Codespace mesmo).
+
+Para testar pelo navegador:
+
+1. Na aba **Ports** do VS Code, torne as portas `3000` e `3001` **Public** (clique
+   direito → Port Visibility → Public).
+2. Copie a URL pública encaminhada de cada porta (formato
+   `https://SEU-CODESPACE-3000.app.github.dev`).
+3. Em `apps/web/.env.local`, use a URL pública da porta `3001` (não `localhost:3001`):
+   ```
+   NEXT_PUBLIC_API_URL=https://SEU-CODESPACE-3001.app.github.dev
+   NEXT_PUBLIC_SSE_URL=https://SEU-CODESPACE-3001.app.github.dev/transactions/stream
+   ```
+4. Em `apps/transactions/.env`, ajuste `CORS_ORIGIN` para a URL pública da porta `3000`
+   (a origem de onde o navegador faz as requisições):
+   ```
+   CORS_ORIGIN="https://SEU-CODESPACE-3000.app.github.dev"
+   ```
+5. Reinicie `transactions` e `web` após qualquer mudança nesses arquivos — variáveis de
+   ambiente só são lidas na inicialização do processo.
+
+Essas URLs mudam a cada novo Codespace criado — se você recriar o ambiente, repita esses
+quatro passos com o nome do novo Codespace.
+
+### Nota: primeira inicialização com Kafka vazio
+
+Em um broker Kafka totalmente novo (sem tópicos criados ainda), o `transactions` pode
+falhar ao subir pela primeira vez com um erro de `UNKNOWN_TOPIC_OR_PARTITION` — é uma
+condição de corrida transitória entre a criação automática do tópico e a eleição do líder
+de partição. Basta reiniciar o serviço (`pnpm start:dev` de novo); na segunda tentativa o
+tópico já existe e o processo sobe normalmente. Detalhado no `DECISIONS.md`.
